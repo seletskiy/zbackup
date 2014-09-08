@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
-	"zbackup/zfs"
 
 	"github.com/docopt/docopt-go"
 	"github.com/op/go-logging"
 	"github.com/theairkit/runcmd"
+	"github.com/theairkit/zfs"
 )
 
 var (

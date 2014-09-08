@@ -5,10 +5,10 @@ import (
 	"os"
 	"strings"
 	"time"
-	"zbackup/zfs"
 
 	"github.com/BurntSushi/toml"
 	"github.com/theairkit/runcmd"
+	"github.com/theairkit/zfs"
 )
 
 type Backup struct {
