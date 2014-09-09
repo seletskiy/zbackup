@@ -12,6 +12,8 @@ import (
 	"github.com/theairkit/zfs"
 )
 
+const version = "1.0"
+
 var (
 	path       = "/etc/zbackup/zbackup.conf"
 	pidfile    = "/var/run/zbackup.pid"
@@ -24,7 +26,7 @@ func main() {
 	usage := `
 Usage:
   zbackup
-  zbackup [-htc filename -p pidfile -v loglevel]
+  zbackup [-h] [-t] [-c filename] [-p pidfile] [-v loglevel]
 
 Options:
   -h             this help
@@ -34,7 +36,7 @@ Options:
   -v loglevel    set loglevel: normal,debug (default: normal)`
 
 	var c Config
-	arguments, _ := docopt.Parse(usage, nil, true, "1.0", false)
+	arguments, _ := docopt.Parse(usage, nil, true, version, false)
 	loglevel := logging.INFO
 	logBackend := logging.NewLogBackend(os.Stderr, "", 0)
 	logging.SetBackend(logBackend)
@@ -54,7 +56,7 @@ Options:
 		case "debug":
 			loglevel = logging.DEBUG
 		default:
-			log.Error("Unknown loglevel, using loglevel: info")
+			log.Error("unknown loglevel, using loglevel: info")
 		}
 	}
 	logging.SetLevel(loglevel, log.Module)
@@ -69,7 +71,7 @@ Options:
 	}
 
 	if _, err := os.Stat(pidfile); err == nil {
-		log.Error(err.Error())
+		log.Error("cannot run: %s already exists", pidfile)
 		return
 	}
 	pid, err := os.Create(pidfile)
@@ -77,6 +79,12 @@ Options:
 		log.Error(err.Error())
 		return
 	}
+	defer func() {
+		if err := os.Remove(pidfile); err != nil {
+			log.Error(err.Error())
+		}
+	}()
+
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
 	wg := sync.WaitGroup{}
@@ -96,7 +104,7 @@ Options:
 				if err := backup(gi, l, r, e, c.User, c.Host, c.Key); err != nil {
 					log.Error("[%d]: %s", gi, err.Error())
 				} else {
-					log.Info("[%d]: finishing backup", gi)
+					log.Info("[%d]: backup done", gi)
 				}
 				<-mt
 				wg.Done()
@@ -104,8 +112,4 @@ Options:
 		}
 	}
 	wg.Wait()
-
-	if err := os.Remove(pidfile); err != nil {
-		log.Error(err.Error())
-	}
 }

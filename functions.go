@@ -18,6 +18,22 @@ type Backup struct {
 	Remote      string `toml:"remote"`
 }
 
+//_
+//in progress
+type BackupTask struct {
+	Host   string
+	User   string
+	Key    string
+	Local  string
+	Remote string
+}
+
+func (bt BackupTask) doBackup() error {
+	return nil
+}
+
+//_
+
 type Config struct {
 	User         string   `toml:"user"`
 	Host         string   `toml:"host"`
@@ -49,7 +65,7 @@ func loadConfig(path string, config *Config) error {
 		return err
 	}
 
-	switch true {
+	switch {
 	case config.User == "":
 		return userErr
 	case config.Host == "":
@@ -60,12 +76,10 @@ func loadConfig(path string, config *Config) error {
 		return backupErr
 	case config.MaxIoThreads == 0:
 		log.Warning(ioThreadWarn)
-		tmp := config.MaxIoThreads
-		tmp = 1
-		config.MaxIoThreads = tmp
+		config.MaxIoThreads = 1
 	}
 	for i := range config.Backup {
-		switch true {
+		switch {
 		case config.Backup[i].Local == "":
 			return fsLocalErr
 		case config.Backup[i].Remote == "":
@@ -89,14 +103,14 @@ func backup(gi int, local, remote, expire, user, host, key string) error {
 	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
 	snapshotPostfix := time.Now().Format(timeFormat)
 	log.Debug("[%d]: check %s exists on %s", gi, remote+"@"+snapshotPostfix, host)
-	if exist, err := rRunner.ExistFs(remote+"@"+snapshotPostfix, zfs.SNAP); err != nil || exist {
+	if exist, err := rRunner.ExistSnap(remote, snapshotPostfix); err != nil || exist {
 		if err != nil {
 			return err
 		}
 		return errors.New(host + ": " + remote + "@" + snapshotPostfix + " " + snapExist)
 	}
 	log.Debug("[%d]: check %s exists", gi, local+"@"+snapCurr)
-	if exist, err := lRunner.ExistFs(local+"@"+snapCurr, zfs.SNAP); err != nil || !exist {
+	if exist, err := lRunner.ExistSnap(local, snapCurr); err != nil || !exist {
 		if err != nil {
 			return err
 		}
