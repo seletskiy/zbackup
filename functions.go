@@ -18,22 +18,6 @@ type Backup struct {
 	Remote      string `toml:"remote"`
 }
 
-//_
-//in progress
-type BackupTask struct {
-	Host   string
-	User   string
-	Key    string
-	Local  string
-	Remote string
-}
-
-func (bt BackupTask) doBackup() error {
-	return nil
-}
-
-//_
-
 type Config struct {
 	User         string   `toml:"user"`
 	Host         string   `toml:"host"`

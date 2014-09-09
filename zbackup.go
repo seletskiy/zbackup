@@ -89,6 +89,7 @@ Options:
 
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)
+
 	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
 	for i := range c.Backup {
 		fsList, err := lRunner.ListFs(c.Backup[i].Local, zfs.FS, c.Backup[i].Recursive)
