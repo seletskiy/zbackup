@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -64,7 +63,6 @@ Options:
 		log.Error("error parsing config: %s", err.Error())
 		return
 	}
-	fmt.Println(c.User, c.Host, c.Key, pidfile, path)
 	log.Info("config ok")
 	if arguments["-t"].(bool) {
 		return
