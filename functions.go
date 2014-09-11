@@ -26,6 +26,12 @@ type Config struct {
 	Backup       []Backup `toml:"backup"`
 }
 
+type BackupTask struct {
+	local  string
+	remote string
+	expire string
+}
+
 var (
 	userErr      = errors.New("user not declared")
 	hostErr      = errors.New("host not declared")
@@ -41,125 +47,131 @@ var (
 	timeFormat   = "2006-01-02T15:04"
 )
 
-func loadConfig(path string, config *Config) error {
+func loadConfig(path string, c *Config) ([]BackupTask, error) {
+	var bt []BackupTask
 	if _, err := os.Stat(path); err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := toml.DecodeFile(path, &config); err != nil {
-		return err
+	if _, err := toml.DecodeFile(path, c); err != nil {
+		return nil, err
 	}
 
 	switch {
-	case config.User == "":
-		return userErr
-	case config.Host == "":
-		return hostErr
-	case config.Key == "":
-		return keyErr
-	case len(config.Backup) < 1:
-		return backupErr
-	case config.MaxIoThreads == 0:
+	case c.User == "":
+		return nil, userErr
+	case c.Host == "":
+		return nil, hostErr
+	case c.Key == "":
+		return nil, keyErr
+	case len(c.Backup) < 1:
+		return nil, backupErr
+	case c.MaxIoThreads == 0:
 		log.Warning(ioThreadWarn)
-		config.MaxIoThreads = 1
+		c.MaxIoThreads = 1
 	}
-	for i := range config.Backup {
+	for i := range c.Backup {
 		switch {
-		case config.Backup[i].Local == "":
-			return fsLocalErr
-		case config.Backup[i].Remote == "":
-			return fsRemoteErr
+		case c.Backup[i].Local == "":
+			return nil, fsLocalErr
+		case c.Backup[i].Remote == "":
+			return nil, fsRemoteErr
 		}
 	}
 
-	return nil
+	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
+	for i := range c.Backup {
+		fsList, err := lRunner.ListFs(c.Backup[i].Local, zfs.FS, c.Backup[i].Recursive)
+		if err != nil {
+			log.Error(err.Error())
+			continue
+		}
+		for _, fs := range fsList {
+			bt = append(bt, BackupTask{fs, c.Backup[i].Remote, c.Backup[i].ExpireHours})
+		}
+	}
+	return bt, nil
 }
 
-func backup(gi int, local, remote, expire, user, host, key string) error {
+func backup(i int, bt BackupTask, lRunner, rRunner *zfs.Zfs) error {
 	h, _ := os.Hostname()
-	remote = remote + "/" + h + "-" + strings.Replace(local, "/", "-", -1)
-	log.Debug("[%d]: create remote runner...", gi)
-	sshRunner, err := runcmd.NewRemoteRunner(user, host, key)
-	if err != nil {
-		return err
-	}
-	rRunner := zfs.NewZfs(sshRunner)
-	log.Debug("[%d]: create local runner...", gi)
-	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
+	remote := bt.remote + "/" + h + "-" + strings.Replace(bt.local, "/", "-", -1)
 	snapshotPostfix := time.Now().Format(timeFormat)
-	log.Debug("[%d]: check %s exists on %s", gi, remote+"@"+snapshotPostfix, host)
+	log.Debug("[%d]: check %s exists", i, remote+"@"+snapshotPostfix)
 	if exist, err := rRunner.ExistSnap(remote, snapshotPostfix); err != nil || exist {
 		if err != nil {
 			return err
 		}
-		return errors.New(host + ": " + remote + "@" + snapshotPostfix + " " + snapExist)
+		return errors.New(remote + "@" + snapshotPostfix + " " + snapExist)
 	}
-	log.Debug("[%d]: check %s exists", gi, local+"@"+snapCurr)
-	if exist, err := lRunner.ExistSnap(local, snapCurr); err != nil || !exist {
+	log.Debug("[%d]: check %s exists", i, bt.local+"@"+snapCurr)
+	if exist, err := lRunner.ExistSnap(bt.local, snapCurr); err != nil || !exist {
 		if err != nil {
 			return err
 		}
-		return doBackup(local, remote, snapCurr, "", lRunner, rRunner, gi)
+		return doBackup(i, bt.local, remote, snapCurr, "", lRunner, rRunner)
 	}
-	if err := doBackup(local, remote, snapCurr, snapNew, lRunner, rRunner, gi); err != nil {
+	if err := doBackup(i, bt.local, remote, snapCurr, snapNew, lRunner, rRunner); err != nil {
 		return err
 	}
-	return cleanExpiredSnapshot(rRunner, remote, expire, gi)
+	return cleanExpiredSnapshot(i, rRunner, remote, bt.expire)
+
+	return nil
 }
 
-func cleanExpiredSnapshot(runner *zfs.Zfs, fs, expireHours string, gi int) error {
-	log.Debug("[%d]: start cleaning expired snapshot on remote, expire: %s", gi, expireHours)
-	log.Debug("[%d]: get list remote snapshots...", gi)
+func cleanExpiredSnapshot(i int, runner *zfs.Zfs, fs, expireHours string) error {
+	log.Debug("[%d]: start cleaning expired snapshot on remote, expire: %s", i, expireHours)
+	log.Debug("[%d]: get list remote snapshots...", i)
 	l, err := runner.ListFs(fs, zfs.SNAP, true)
 	if err != nil {
 		return err
 	}
 	if expireHours == "" {
-		log.Info("[%d]: %s", gi, expireWarn)
+		log.Info("[%d]: %s", i, expireWarn)
 		return nil
 	}
 	if len(l) > 0 {
-		log.Debug("[%d]: determines expired snapshot...", gi)
+		log.Debug("[%d]: determines expired snapshot...", i)
 		for _, snapshot := range l {
 			poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
 			expire, _ := time.ParseDuration(expireHours)
 			if time.Since(poolDate) > expire {
-				log.Debug("[%d]: %s will be delete (>%s), trying to do it...", gi, snapshot, expireHours)
+				log.Debug("[%d]: %s will be delete (>%s), trying to do it...", i, snapshot, expireHours)
 				if err := runner.DestroyFs(snapshot); err != nil {
-					log.Error("[%d]: error destroying %s: %s", gi, snapshot, err.Error())
+					log.Error("[%d]: error destroying %s: %s", i, snapshot, err.Error())
 					continue
 				}
 			} else {
-				log.Debug("[%d]: %s not exipred, skipping", gi, snapshot)
+				log.Debug("[%d]: %s not exipred, skipping", i, snapshot)
 			}
 		}
 	}
 	return nil
 }
 
-func doBackup(src, dst, snapCurr, snapNew string, lRunner, rRunner *zfs.Zfs, gi int) error {
+func doBackup(i int, src, dst, snapCurr, snapNew string, lRunner, rRunner *zfs.Zfs) error {
 	snapshotPostfix := time.Now().Format(timeFormat)
 	snap := snapCurr
 	if snapNew != "" {
 		snap = snapNew
 	}
-	log.Debug("[%d]: create snapshot: %s...", gi, snap)
+	log.Debug("[%d]: create snapshot: %s...", i, snap)
 	if err := lRunner.CreateSnapshot(src, snap); err != nil {
 		return err
 	}
-	log.Debug("[%d]: prepare for recieve snapshot on remote...", gi)
+	log.Debug("[%d]: prepare for recieve snapshot on remote...", i)
 	cmdRecv, err := rRunner.RecvSnapshot(dst, snapshotPostfix)
 	if err != nil {
 		return err
 	}
-	log.Debug("[%d]: starting copy snapshot from local to remote...", gi)
-	if err := lRunner.SendSnapshot(src, snapCurr, snapNew, cmdRecv.Stdin); err != nil {
+	log.Debug("[%d]: starting copy snapshot from local to remote...", i)
+	if err := lRunner.SendSnapshot(src, snapCurr, snapNew, cmdRecv); err != nil {
 		return err
 	}
-	if err := rRunner.WaitCmd(); err != nil {
+	if err := cmdRecv.Wait(); err != nil {
 		return err
 	}
 	if snapNew != "" {
-		log.Debug("[%d]: start rotate snapshot on local (destroy @curr, move @new to @curr)...", gi)
+		log.Debug("[%d]: start rotate snapshot on local (destroy @curr, move @new to @curr)...", i)
 		if err := lRunner.DestroyFs(src + "@" + snapCurr); err != nil {
 			return err
 		}

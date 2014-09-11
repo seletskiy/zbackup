@@ -12,7 +12,7 @@ import (
 	"github.com/theairkit/zfs"
 )
 
-const version = "1.0"
+const version = "1.2"
 
 var (
 	path       = "/etc/zbackup/zbackup.conf"
@@ -35,14 +35,14 @@ Options:
   -p pidfile     set pidfile (default: /var/run/zbackup.pid)
   -v loglevel    set loglevel: normal,debug (default: normal)`
 
-	var c Config
 	arguments, _ := docopt.Parse(usage, nil, true, version, false)
+
 	loglevel := logging.INFO
 	logBackend := logging.NewLogBackend(os.Stderr, "", 0)
 	logging.SetBackend(logBackend)
 	logging.SetFormatter(logging.MustStringFormatter(format))
 	logging.SetLevel(loglevel, log.Module)
-
+	var c Config
 	if arguments["-c"] != nil {
 		path = arguments["-c"].(string)
 	}
@@ -61,7 +61,8 @@ Options:
 	}
 	logging.SetLevel(loglevel, log.Module)
 
-	if err := loadConfig(path, &c); err != nil {
+	backupTasks, err := loadConfig(path, &c)
+	if err != nil {
 		log.Error("error parsing config: %s", err.Error())
 		return
 	}
@@ -84,33 +85,34 @@ Options:
 			log.Error(err.Error())
 		}
 	}()
-
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
+	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
+	if lRunner == nil {
+		log.Error("cannot create new local runner")
+		return
+	}
+	rRunner := zfs.NewZfs(runcmd.NewRemoteRunner(c.User, c.Host, c.Key))
+	if rRunner == nil {
+		log.Error("cannot create new remote runner")
+		return
+	}
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)
 
-	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
-	for i := range c.Backup {
-		fsList, err := lRunner.ListFs(c.Backup[i].Local, zfs.FS, c.Backup[i].Recursive)
-		if err != nil {
-			log.Error(err.Error())
-			continue
-		}
-		for _, fs := range fsList {
-			wg.Add(1)
-			mt <- struct{}{}
-			go func(gi int, l, r, e string) {
-				log.Info("[%d]: starting backup: %s --> %s/%s (expire: %s)", gi, l, c.Host, r, e)
-				if err := backup(gi, l, r, e, c.User, c.Host, c.Key); err != nil {
-					log.Error("[%d]: %s", gi, err.Error())
-				} else {
-					log.Info("[%d]: backup done", gi)
-				}
-				<-mt
-				wg.Done()
-			}(i, fs, c.Backup[i].Remote, c.Backup[i].ExpireHours)
-		}
+	for i, _ := range backupTasks {
+		wg.Add(1)
+		mt <- struct{}{}
+		go func(i int) {
+			log.Info("[%d]: starting backup", i)
+			if err := backup(i, backupTasks[i], lRunner, rRunner); err != nil {
+				log.Error("[%d]: %s", i, err.Error())
+			} else {
+				log.Info("[%d]: backup done", i)
+			}
+			<-mt
+			wg.Done()
+		}(i)
 	}
 	wg.Wait()
 }
