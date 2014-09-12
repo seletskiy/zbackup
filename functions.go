@@ -45,6 +45,7 @@ var (
 	expireWarn   = "[[backup]]: expire_hours is not set (don`t delete old backups), will not clean"
 	ioThreadWarn = "'max_io_threads' is not set, or set to '0', setting it to '1'"
 	timeFormat   = "2006-01-02T15:04"
+	h, _         = os.Hostname()
 )
 
 func loadConfig(path string, c *Config) ([]BackupTask, error) {
@@ -93,7 +94,6 @@ func loadConfig(path string, c *Config) ([]BackupTask, error) {
 }
 
 func backup(i int, bt BackupTask, lRunner, rRunner *zfs.Zfs) error {
-	h, _ := os.Hostname()
 	remote := bt.remote + "/" + h + "-" + strings.Replace(bt.local, "/", "-", -1)
 	snapshotPostfix := time.Now().Format(timeFormat)
 	log.Debug("[%d]: check %s exists", i, remote+"@"+snapshotPostfix)
@@ -127,22 +127,22 @@ func cleanExpiredSnapshot(i int, runner *zfs.Zfs, fs, expireHours string) error 
 		log.Info("[%d]: %s", i, expireWarn)
 		return nil
 	}
-	if len(l) > 0 {
-		log.Debug("[%d]: determines expired snapshot...", i)
-		for _, snapshot := range l {
-			poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
-			expire, _ := time.ParseDuration(expireHours)
-			if time.Since(poolDate) > expire {
-				log.Debug("[%d]: %s will be delete (>%s)", i, snapshot, expireHours)
-				if err := runner.DestroyFs(snapshot); err != nil {
-					log.Error("[%d]: error destroying %s: %s", i, snapshot, err.Error())
-					continue
-				}
-			} else {
-				log.Debug("[%d]: %s not exipred, skipping", i, snapshot)
+
+	log.Debug("[%d]: determines expired snapshot...", i)
+	for _, snapshot := range l {
+		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
+		expire, _ := time.ParseDuration(expireHours)
+		if time.Since(poolDate) > expire {
+			log.Debug("[%d]: %s will be delete (>%s)", i, snapshot, expireHours)
+			if err := runner.DestroyFs(snapshot); err != nil {
+				log.Error("[%d]: error destroying %s: %s", i, snapshot, err.Error())
+				continue
 			}
+		} else {
+			log.Debug("[%d]: %s not exipred, skipping", i, snapshot)
 		}
 	}
+
 	return nil
 }
 
