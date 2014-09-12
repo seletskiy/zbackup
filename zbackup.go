@@ -35,14 +35,14 @@ Options:
   -p pidfile     set pidfile (default: /var/run/zbackup.pid)
   -v loglevel    set loglevel: normal,debug (default: normal)`
 
+	var c Config
 	arguments, _ := docopt.Parse(usage, nil, true, version, false)
-
 	loglevel := logging.INFO
 	logBackend := logging.NewLogBackend(os.Stderr, "", 0)
 	logging.SetBackend(logBackend)
 	logging.SetFormatter(logging.MustStringFormatter(format))
 	logging.SetLevel(loglevel, log.Module)
-	var c Config
+
 	if arguments["-c"] != nil {
 		path = arguments["-c"].(string)
 	}
@@ -56,7 +56,7 @@ Options:
 		case "debug":
 			loglevel = logging.DEBUG
 		default:
-			log.Error("unknown loglevel, using loglevel: info")
+			log.Info("unknown loglevel, using loglevel: info")
 		}
 	}
 	logging.SetLevel(loglevel, log.Module)
@@ -97,9 +97,9 @@ Options:
 		log.Error("cannot create new remote runner")
 		return
 	}
+
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)
-
 	for i, _ := range backupTasks {
 		wg.Add(1)
 		mt <- struct{}{}

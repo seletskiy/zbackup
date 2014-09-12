@@ -114,8 +114,6 @@ func backup(i int, bt BackupTask, lRunner, rRunner *zfs.Zfs) error {
 		return err
 	}
 	return cleanExpiredSnapshot(i, rRunner, remote, bt.expire)
-
-	return nil
 }
 
 func cleanExpiredSnapshot(i int, runner *zfs.Zfs, fs, expireHours string) error {
@@ -135,7 +133,7 @@ func cleanExpiredSnapshot(i int, runner *zfs.Zfs, fs, expireHours string) error 
 			poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
 			expire, _ := time.ParseDuration(expireHours)
 			if time.Since(poolDate) > expire {
-				log.Debug("[%d]: %s will be delete (>%s), trying to do it...", i, snapshot, expireHours)
+				log.Debug("[%d]: %s will be delete (>%s)", i, snapshot, expireHours)
 				if err := runner.DestroyFs(snapshot); err != nil {
 					log.Error("[%d]: error destroying %s: %s", i, snapshot, err.Error())
 					continue
