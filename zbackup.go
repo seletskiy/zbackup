@@ -43,6 +43,7 @@ Options:
 	logging.SetFormatter(logging.MustStringFormatter(format))
 	logging.SetLevel(loglevel, log.Module)
 
+	// Parse arrguments:
 	if arguments["-c"] != nil {
 		path = arguments["-c"].(string)
 	}
@@ -61,6 +62,7 @@ Options:
 	}
 	logging.SetLevel(loglevel, log.Module)
 
+	// Parse configuration file:
 	if err := loadConfig(path, &c); err != nil {
 		log.Error("error parsing config:  %s", err.Error())
 		return
@@ -70,6 +72,7 @@ Options:
 		return
 	}
 
+	// Create pidfile (and defer close):
 	if _, err := os.Stat(pidfile); err == nil {
 		log.Error("cannot run: %s already exists", pidfile)
 		return
@@ -86,13 +89,19 @@ Options:
 	}()
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
-	backuper := NewBackuper(&c)
+	// Create backup types:
+	backuper, err := NewBackuper(&c)
+	if err != nil {
+		log.Error(err.Error())
+		return
+	}
 	backupTasks := backuper.setupTasks()
 	if len(backupTasks) == 0 {
 		log.Warning(warnEmpty)
 		return
 	}
 
+	// Perform backups:
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)
 	for i, _ := range backupTasks {

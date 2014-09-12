@@ -35,8 +35,8 @@ type Backuper struct {
 
 type BackupTask struct {
 	id      int
-	local   string
-	remote  string
+	src     string
+	dst     string
 	expire  string
 	lRunner *zfs.Zfs
 	rRunner *zfs.Zfs
@@ -94,16 +94,16 @@ func loadConfig(path string, c *Config) error {
 	return nil
 }
 
-func NewBackuper(c *Config) *Backuper {
+func NewBackuper(c *Config) (*Backuper, error) {
 	l := zfs.NewZfs(runcmd.NewLocalRunner())
 	if l == nil {
-		log.Error("cannot create new local runner")
+		return nil, errors.New("cannot create new local runner")
 	}
 	r := zfs.NewZfs(runcmd.NewRemoteRunner(c.User, c.Host, c.Key))
 	if r == nil {
-		log.Error("cannot create new remote runner")
+		return nil, errors.New("cannot create new remote runner")
 	}
-	return &Backuper{l, r, c}
+	return &Backuper{l, r, c}, nil
 }
 
 func (this *Backuper) setupTasks() []BackupTask {
@@ -137,20 +137,27 @@ func (this *Backuper) setupTasks() []BackupTask {
 }
 
 func (this *BackupTask) doBackup() error {
+	id := this.id
+	src := this.src
+	dst := this.dst
+
 	snapshotPostfix := time.Now().Format(timeFormat)
-	log.Debug("[%d]: check %s exists", this.id, this.remote+"@"+snapshotPostfix)
-	if exist, err := this.rRunner.ExistSnap(this.remote, snapshotPostfix); err != nil || exist {
+	log.Debug("[%d]: check %s exists", id, dst+"@"+snapshotPostfix)
+
+	if exist, err := this.rRunner.ExistSnap(dst, snapshotPostfix); err != nil || exist {
 		if err != nil {
 			return err
 		}
-		return errors.New(this.remote + "@" + snapshotPostfix + " " + snapExist)
+		return errors.New(dst + "@" + snapshotPostfix + " " + snapExist)
 	}
-	log.Debug("[%d]: check %s exists", this.id, this.local+"@"+snapCurr)
-	if exist, err := this.lRunner.ExistSnap(this.local, snapCurr); err != nil || !exist {
+
+	log.Debug("[%d]: check %s exists", id, src+"@"+snapCurr)
+
+	if exist, err := this.lRunner.ExistSnap(src, snapCurr); err != nil || !exist {
 		if err != nil {
 			return err
 		}
-		return this.backupHelper("")
+		snapNew = ""
 	}
 	if err := this.backupHelper(snapNew); err != nil {
 		return err
@@ -159,33 +166,45 @@ func (this *BackupTask) doBackup() error {
 }
 
 func (this *BackupTask) backupHelper(snapNew string) error {
+	id := this.id
+	src := this.src
+	dst := this.dst
+
 	snapshotPostfix := time.Now().Format(timeFormat)
 	snap := snapCurr
 	if snapNew != "" {
 		snap = snapNew
 	}
-	log.Debug("[%d]: create snapshot: %s...", this.id, snap)
-	if err := this.lRunner.CreateSnapshot(this.local, snap); err != nil {
+
+	log.Debug("[%d]: create snapshot: %s...", id, snap)
+
+	if err := this.lRunner.CreateSnapshot(src, snap); err != nil {
 		return err
 	}
-	log.Debug("[%d]: prepare for recieve snapshot on remote...", this.id)
-	cmdRecv, err := this.rRunner.RecvSnapshot(this.remote, snapshotPostfix)
+
+	log.Debug("[%d]: prepare for recieve snapshot on remote...", id)
+
+	cmdRecv, err := this.rRunner.RecvSnapshot(dst, snapshotPostfix)
 	if err != nil {
 		return err
 	}
+
 	log.Debug("[%d]: copy snapshot from local to remote...", this.id)
-	if err := this.lRunner.SendSnapshot(this.local, snapCurr, snapNew, cmdRecv); err != nil {
+
+	if err := this.lRunner.SendSnapshot(src, snapCurr, snapNew, cmdRecv); err != nil {
 		return err
 	}
 	if err := cmdRecv.Wait(); err != nil {
 		return err
 	}
 	if snapNew != "" {
-		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", this.id)
-		if err := this.lRunner.DestroyFs(this.local + "@" + snapCurr); err != nil {
+
+		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", id)
+
+		if err := this.lRunner.DestroyFs(src + "@" + snapCurr); err != nil {
 			return err
 		}
-		if err := this.lRunner.RenameFs(this.local+"@"+snapNew, this.local+"@"+snapCurr); err != nil {
+		if err := this.lRunner.RenameFs(src+"@"+snapNew, src+"@"+snapCurr); err != nil {
 			return err
 		}
 	}
@@ -193,42 +212,47 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 }
 
 func (this *BackupTask) cleanExpired() error {
-	log.Debug("[%d]: start cleaning expired snapshot on remote, expire: %s",
-		this.id,
-		this.expire,
-	)
+	id := this.id
+	dst := this.dst
+	expire := this.expire
 
-	log.Debug("[%d]: get list remote snapshots...", this.id)
-	l, err := this.rRunner.ListFs(this.remote, zfs.SNAP, true)
+	log.Debug("[%d]: start cleaning expired snapshot on remote, expire: %s", id, expire)
+	log.Debug("[%d]: get list remote snapshots...", id)
+
+	snapList, err := this.rRunner.ListFs(dst, zfs.SNAP, true)
 	if err != nil {
 		return err
 	}
-	if this.expire == "" {
-		log.Info("[%d]: %s", this.id, this.expire)
+	if expire == "" {
+		log.Info("[%d]: %s", id, expire)
 		return nil
 	}
 
-	log.Debug("[%d]: determines expired snapshot...", this.id)
-	for _, snapshot := range l {
+	log.Debug("[%d]: determines expired snapshot...", id)
+
+	for _, snapshot := range snapList {
 		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
-		expire, _ := time.ParseDuration(this.expire)
+		expire, _ := time.ParseDuration(expire)
 		if time.Since(poolDate) > expire {
-			log.Debug("[%d]: %s will be delete (>%s)", this.id, snapshot, this.expire)
+
+			log.Debug("[%d]: %s will be delete (>%s)", id, snapshot, expire)
+
 			if err := this.rRunner.DestroyFs(snapshot); err != nil {
-				log.Error("[%d]: error destroying %s: %s", this.id, snapshot, err.Error())
+
+				log.Error("[%d]: error destroying %s: %s", id, snapshot, err.Error())
 				continue
 			}
 		} else {
-			log.Debug("[%d]: %s not exipred, skipping", this.id, snapshot)
+			log.Debug("[%d]: %s not exipred, skipping", id, snapshot)
 		}
 	}
 
 	return nil
 }
 
-func remoteName(local string, b Backup) string {
+func remoteName(src string, b Backup) string {
 	if b.RemotePrefix != "" {
 		return b.RemoteRoot + "/" + b.RemotePrefix
 	}
-	return b.RemotePrefix + "/" + h + "-" + strings.Replace(local, "/", "-", -1)
+	return b.RemotePrefix + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
 }
