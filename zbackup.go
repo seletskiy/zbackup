@@ -8,8 +8,6 @@ import (
 
 	"github.com/docopt/docopt-go"
 	"github.com/op/go-logging"
-	"github.com/theairkit/runcmd"
-	"github.com/theairkit/zfs"
 )
 
 const version = "1.2"
@@ -17,7 +15,9 @@ const version = "1.2"
 var (
 	path       = "/etc/zbackup/zbackup.conf"
 	pidfile    = "/var/run/zbackup.pid"
-	pidfileErr = "pidfile already exists: "
+	errPidfile = "pidfile already exists: "
+	warnLog    = "unknown loglevel, using loglevel: info"
+	warnEmpty  = "nothing backup: no filesystems, described in configuration file"
 	format     = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
 	log        = logging.MustGetLogger("zbackup")
 )
@@ -56,14 +56,13 @@ Options:
 		case "debug":
 			loglevel = logging.DEBUG
 		default:
-			log.Info("unknown loglevel, using loglevel: info")
+			log.Info(warnLog)
 		}
 	}
 	logging.SetLevel(loglevel, log.Module)
 
-	backupTasks, err := loadConfig(path, &c)
-	if err != nil {
-		log.Error("error parsing config: %s", err.Error())
+	if err := loadConfig(path, &c); err != nil {
+		log.Error("error parsing config:  %s", err.Error())
 		return
 	}
 	log.Info("config ok")
@@ -87,14 +86,10 @@ Options:
 	}()
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
-	lRunner := zfs.NewZfs(runcmd.NewLocalRunner())
-	if lRunner == nil {
-		log.Error("cannot create new local runner")
-		return
-	}
-	rRunner := zfs.NewZfs(runcmd.NewRemoteRunner(c.User, c.Host, c.Key))
-	if rRunner == nil {
-		log.Error("cannot create new remote runner")
+	backuper := NewBackuper(&c)
+	backupTasks := backuper.setupTasks()
+	if len(backupTasks) == 0 {
+		log.Warning(warnEmpty)
 		return
 	}
 
@@ -105,7 +100,7 @@ Options:
 		mt <- struct{}{}
 		go func(i int) {
 			log.Info("[%d]: starting backup", i)
-			if err := backup(i, backupTasks[i], lRunner, rRunner); err != nil {
+			if err := backupTasks[i].doBackup(); err != nil {
 				log.Error("[%d]: %s", i, err.Error())
 			} else {
 				log.Info("[%d]: backup done", i)
