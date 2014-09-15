@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -17,7 +18,7 @@ var (
 	pidfile    = "/var/run/zbackup.pid"
 	errPidfile = "pidfile already exists: "
 	warnLog    = "unknown loglevel, using loglevel: info"
-	warnEmpty  = "nothing backup: no filesystems, described in configuration file"
+	warnEmpty  = "no backup tasks"
 	format     = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
 	log        = logging.MustGetLogger("zbackup")
 )
@@ -26,14 +27,22 @@ func main() {
 	usage := `
 Usage:
   zbackup
-  zbackup [-h] [-t] [-c filename] [-p pidfile] [-v loglevel]
+  zbackup [-h] [-t] [-p pidfile] [-v loglevel]
+          (-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])
 
 Options:
-  -h             this help
-  -t             test configuration and exit
-  -c filename    set configuration file (default: /etc/zbackup/zbackup.conf)
-  -p pidfile     set pidfile (default: /var/run/zbackup.pid)
-  -v loglevel    set loglevel: normal,debug (default: normal)`
+  -h              this help
+  -t              test configuration and exit
+  -p pidfile      set pidfile (default: /var/run/zbackup.pid)
+  -v loglevel     set loglevel: info,debug (default: info)
+  -c configfile   configuration-based backup (default: /etc/zbackup/zbackup.conf)
+  -u zfsproperty  property-based backup, performs backup for fs, having this property
+  --host host     set backup host: ${hostname}:${port}
+  --user user     set backup user: (root by default)
+  --key key       set keyfile: (/root/.ssh/id_rsa by default)
+  --iothreads num set iothreads (5 by default)
+  --remote fs     set remote fs ('zroot' by default)
+  --expire hours  set snapshot expire time in hours: '${n}h' (24h by default)`
 
 	var c Config
 	arguments, _ := docopt.Parse(usage, nil, true, version, false)
@@ -43,10 +52,6 @@ Options:
 	logging.SetFormatter(logging.MustStringFormatter(format))
 	logging.SetLevel(loglevel, log.Module)
 
-	// Parse arrguments:
-	if arguments["-c"] != nil {
-		path = arguments["-c"].(string)
-	}
 	if arguments["-p"] != nil {
 		pidfile = arguments["-p"].(string)
 	}
@@ -60,19 +65,45 @@ Options:
 			log.Info(warnLog)
 		}
 	}
+	if arguments["-c"] != nil {
+		path = arguments["-c"].(string)
+		if err := loadConfigFromFile(&c, path); err != nil {
+			log.Error("error loading config:  %s", err.Error())
+			return
+		}
+	}
+	if arguments["-u"] != nil {
+		property := arguments["-u"].(string)
+		host := arguments["--host"].(string)
+		user := "root"
+		key := "/root/.ssh/id_rsa"
+		iothreads := 5
+		remote := "zroot"
+		expire := "24h"
+		if arguments["--user"] != nil {
+			user = arguments["--user"].(string)
+		}
+		if arguments["--key"] != nil {
+			key = arguments["--key"].(string)
+		}
+		if arguments["--iothreads"] != nil {
+			iothreads, _ = strconv.Atoi(arguments["--iothreads"].(string))
+		}
+		if arguments["--remote"] != nil {
+			remote = arguments["--remote"].(string)
+		}
+		if arguments["--expire"] != nil {
+			expire = arguments["--expire"].(string)
+		}
+		c = Config{Host: host, User: user, Key: key, MaxIoThreads: iothreads}
+		if err := loadConfigFromArgs(&c, property, remote, expire); err != nil {
+			log.Error("error loading config:  %s", err.Error())
+			return
+		}
+
+	}
 	logging.SetLevel(loglevel, log.Module)
 
-	// Parse configuration file:
-	if err := loadConfig(path, &c); err != nil {
-		log.Error("error parsing config:  %s", err.Error())
-		return
-	}
-	log.Info("config ok")
-	if arguments["-t"].(bool) {
-		return
-	}
-
-	// Create pidfile (and defer close):
 	if _, err := os.Stat(pidfile); err == nil {
 		log.Error("cannot run: %s already exists", pidfile)
 		return
@@ -89,19 +120,27 @@ Options:
 	}()
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
-	// Create backup types:
-	backuper, err := NewBackuper(&c)
+	b, err := NewBackuper(&c)
 	if err != nil {
 		log.Error(err.Error())
 		return
 	}
-	backupTasks := backuper.setupTasks()
+
+	backupTasks := b.setupTasks()
 	if len(backupTasks) == 0 {
 		log.Warning(warnEmpty)
 		return
 	}
 
-	// Perform backups:
+	//_
+	// Debug:
+	fmt.Println(c.MaxIoThreads)
+	for _, bt := range backupTasks {
+		fmt.Println(bt)
+	}
+	return
+	//__
+
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)
 	for i, _ := range backupTasks {
