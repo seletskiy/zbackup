@@ -46,9 +46,9 @@ var (
 	errUser       = errors.New("user not declared")
 	errHost       = errors.New("host not declared")
 	errKey        = errors.New("key not declared")
-	errBackup     = errors.New("[[backup]] section not declared")
+	errBackup     = errors.New("[[backup]]: section not declared")
 	errFsLocal    = errors.New("[[backup]]: local not declared")
-	errFsRemote   = errors.New("[[backup]]: remote not declared")
+	errFsRemote   = errors.New("[[backup]]: remote_root not declared")
 	errMask       = "'recursive' and regexp are mutually exclusive; skip this [[backup]] section"
 	errPrefix     = "'remote_prefix' and 'recursive' are mutually exclusive; skip this [[backup]] section"
 	errPrefixMask = "'remote_prefix' and regexp are mutually exclusive; skip this [[backup]] section"

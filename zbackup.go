@@ -66,10 +66,6 @@ Options:
 	}
 	if arguments["-c"] != nil {
 		path = arguments["-c"].(string)
-		if err := loadConfigFromFile(&c, path); err != nil {
-			log.Error("error loading config:  %s", err.Error())
-			return
-		}
 	}
 	if arguments["-u"] != nil {
 		property := arguments["-u"].(string)
@@ -97,6 +93,11 @@ Options:
 
 		c = Config{Host: host, User: user, Key: key, MaxIoThreads: iothreads}
 		if err := loadConfigFromArgs(&c, property, remote, expire); err != nil {
+			log.Error("error loading config:  %s", err.Error())
+			return
+		}
+	} else {
+		if err := loadConfigFromFile(&c, path); err != nil {
 			log.Error("error loading config:  %s", err.Error())
 			return
 		}
