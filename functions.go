@@ -97,9 +97,9 @@ func loadConfigFromFile(c *Config, path string) error {
 }
 
 func loadConfigFromArgs(c *Config, property, remote, expire string) error {
-	lRunner, _ := zfs.NewZfs(runcmd.NewLocalRunner())
-	if lRunner == nil {
-		return errors.New("cannot create local runner")
+	lRunner, err := zfs.NewZfs(runcmd.NewLocalRunner())
+	if err != nil {
+		return err
 	}
 	fsList, err := lRunner.ListFsByProperty(property)
 	if err != nil {
@@ -113,9 +113,9 @@ func loadConfigFromArgs(c *Config, property, remote, expire string) error {
 }
 
 func NewBackuper(c *Config) (*Backuper, error) {
-	l, _ := zfs.NewZfs(runcmd.NewLocalRunner())
-	if l == nil {
-		return nil, errors.New("cannot create local runner")
+	l, err := zfs.NewZfs(runcmd.NewLocalRunner())
+	if err != nil {
+		return nil, err
 	}
 	r, err := zfs.NewZfs(runcmd.NewRemoteRunner(c.User, c.Host, c.Key))
 	if err != nil {
@@ -142,11 +142,7 @@ func (this *Backuper) setupTasks() []BackupTask {
 			continue
 		}
 
-		fsList, err := this.lRunner.ListFs(
-			c[i].Local,
-			zfs.FS,
-			c[i].Recursive,
-		)
+		fsList, err := this.lRunner.ListFs(c[i].Local, zfs.FS, c[i].Recursive)
 		if err != nil {
 			log.Error(err.Error())
 			continue
@@ -229,7 +225,6 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 		return err
 	}
 	if snapNew != "" {
-
 		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", id)
 
 		if err := this.lRunner.DestroyFs(src + "@" + snapCurr); err != nil {
@@ -259,15 +254,14 @@ func (this *BackupTask) cleanExpired() error {
 	}
 
 	log.Debug("[%d]: determines expired snapshot...", id)
-
 	for _, snapshot := range snapList {
 		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
 		expire, _ := time.ParseDuration(expire)
+
 		if time.Since(poolDate) > expire {
-
 			log.Debug("[%d]: %s will be delete (>%s)", id, snapshot, expire)
-			if err := this.rRunner.DestroyFs(snapshot); err != nil {
 
+			if err := this.rRunner.DestroyFs(snapshot); err != nil {
 				log.Error("[%d]: error destroying %s: %s", id, snapshot, err.Error())
 				continue
 			}
@@ -275,6 +269,5 @@ func (this *BackupTask) cleanExpired() error {
 			log.Debug("[%d]: %s not exipred, skipping", id, snapshot)
 		}
 	}
-
 	return nil
 }

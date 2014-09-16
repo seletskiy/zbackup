@@ -10,7 +10,7 @@ import (
 	"github.com/op/go-logging"
 )
 
-const version = "1.2"
+const version = "1.3"
 
 var (
 	path       = "/etc/zbackup/zbackup.conf"
@@ -94,6 +94,7 @@ Options:
 		if arguments["--expire"] != nil {
 			expire = arguments["--expire"].(string)
 		}
+
 		c = Config{Host: host, User: user, Key: key, MaxIoThreads: iothreads}
 		if err := loadConfigFromArgs(&c, property, remote, expire); err != nil {
 			log.Error("error loading config:  %s", err.Error())
