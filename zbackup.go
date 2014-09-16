@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -100,7 +99,10 @@ Options:
 			log.Error("error loading config:  %s", err.Error())
 			return
 		}
-
+	}
+	if arguments["-t"].(bool) {
+		log.Info("config ok")
+		return
 	}
 	logging.SetLevel(loglevel, log.Module)
 
@@ -125,21 +127,11 @@ Options:
 		log.Error(err.Error())
 		return
 	}
-
 	backupTasks := b.setupTasks()
 	if len(backupTasks) == 0 {
 		log.Warning(warnEmpty)
 		return
 	}
-
-	//_
-	// Debug:
-	fmt.Println(c.MaxIoThreads)
-	for _, bt := range backupTasks {
-		fmt.Println(bt)
-	}
-	return
-	//__
 
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)

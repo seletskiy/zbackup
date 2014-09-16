@@ -196,8 +196,7 @@ func (this *BackupTask) doBackup() error {
 	if err := this.backupHelper(snapNew); err != nil {
 		return err
 	}
-	return nil
-	//return this.cleanExpired()
+	return this.cleanExpired()
 }
 
 func (this *BackupTask) backupHelper(snapNew string) error {
@@ -278,11 +277,4 @@ func (this *BackupTask) cleanExpired() error {
 	}
 
 	return nil
-}
-
-func remoteName(src string, b Backup) string {
-	if b.RemotePrefix != "" {
-		return b.RemoteRoot + "/" + b.RemotePrefix
-	}
-	return b.RemotePrefix + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
 }
