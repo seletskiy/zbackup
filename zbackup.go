@@ -15,6 +15,11 @@ const version = "1.3"
 var (
 	path       = "/etc/zbackup/zbackup.conf"
 	pidfile    = "/var/run/zbackup.pid"
+	key        = "/root/.ssh/id_rsa"
+	user       = "root"
+	remote     = "zroot"
+	expire     = "24h"
+	iothreads  = 5
 	errPidfile = "pidfile already exists: "
 	warnLog    = "unknown loglevel, using loglevel: info"
 	warnEmpty  = "no backup tasks"
@@ -27,7 +32,7 @@ func main() {
 Usage:
   zbackup
   zbackup [-h] [-t] [-p pidfile] [-v loglevel]
-          (-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])
+          [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
 
 Options:
   -h              this help
@@ -70,11 +75,6 @@ Options:
 	if arguments["-u"] != nil {
 		property := arguments["-u"].(string)
 		host := arguments["--host"].(string)
-		user := "root"
-		key := "/root/.ssh/id_rsa"
-		iothreads := 5
-		remote := "zroot"
-		expire := "24h"
 		if arguments["--user"] != nil {
 			user = arguments["--user"].(string)
 		}
