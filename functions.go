@@ -117,7 +117,7 @@ func NewBackuper(c *Config) (*Backuper, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := zfs.NewZfs(runcmd.NewRemoteRunner(c.User, c.Host, c.Key))
+	r, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
 	if err != nil {
 		return nil, err
 	}
