@@ -181,7 +181,6 @@ func (this *BackupTask) doBackup() error {
 		}
 		return errors.New(dst + "@" + snapPostfix + " " + snapExist)
 	}
-
 	log.Debug("[%d]: check %s exists", id, src+"@"+snapCurr)
 	if exist, err := this.lRunner.ExistSnap(src, snapCurr); err != nil || !exist {
 		if err != nil {
