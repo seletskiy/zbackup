@@ -223,6 +223,7 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 	if err := cmdRecv.Wait(); err != nil {
 		return err
 	}
+
 	if snapNew != "" {
 		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", id)
 
@@ -233,7 +234,14 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 			return err
 		}
 	}
-	return nil
+
+	log.Debug("[%d]: set remote %s 'readonly'...", this.id, dst)
+	if err := this.rRunner.SetProperty("readonly", "on", dst); err != nil {
+		return err
+	}
+
+	log.Debug("[%d]: set remote %s 'zbackup:=true'...", this.id, dst+snapPostfix)
+	return this.rRunner.SetProperty("zbackup:", "true", dst+"@"+snapPostfix)
 }
 
 func (this *BackupTask) cleanExpired() error {
@@ -254,6 +262,15 @@ func (this *BackupTask) cleanExpired() error {
 
 	log.Debug("[%d]: determines expired snapshot...", id)
 	for _, snapshot := range snapList {
+		prop, err := this.rRunner.Property("zbackup:", snapshot)
+		if err != nil {
+			return err
+		}
+		if prop != "true" {
+			log.Debug("[%d]: %s is not created by zbackup, skipping", this.id, snapshot)
+			continue
+		}
+
 		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
 		expire, _ := time.ParseDuration(expire)
 

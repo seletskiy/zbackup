@@ -10,7 +10,7 @@ import (
 	"github.com/op/go-logging"
 )
 
-const version = "1.3"
+const version = "1.4"
 
 var (
 	path       = "/etc/zbackup/zbackup.conf"
