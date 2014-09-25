@@ -260,6 +260,11 @@ func (this *BackupTask) cleanExpired() error {
 		return nil
 	}
 
+	recent, err := this.rRunner.RecentSnapshot(dst)
+	if err != nil {
+		return err
+	}
+
 	log.Debug("[%d]: determines expired snapshot...", id)
 	for _, snapshot := range snapList {
 		prop, err := this.rRunner.Property("zbackup:", snapshot)
@@ -271,11 +276,21 @@ func (this *BackupTask) cleanExpired() error {
 			continue
 		}
 
+		if this.expire == "lastone" {
+			if snapshot != recent {
+				log.Debug("[%d]: %s will be destroy (not recent)", id, snapshot)
+				if err := this.rRunner.DestroyFs(snapshot); err != nil {
+					log.Error("[%d]: error destroying %s: %s", id, snapshot, err.Error())
+				}
+			}
+			continue
+		}
+
 		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
 		expire, _ := time.ParseDuration(expire)
 
 		if time.Since(poolDate) > expire {
-			log.Debug("[%d]: %s will be delete (>%s)", id, snapshot, expire)
+			log.Debug("[%d]: %s will be destroy (>%s)", id, snapshot, expire)
 
 			if err := this.rRunner.DestroyFs(snapshot); err != nil {
 				log.Error("[%d]: error destroying %s: %s", id, snapshot, err.Error())
