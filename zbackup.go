@@ -25,6 +25,7 @@ var (
 	warnEmpty  = "no backup tasks"
 	format     = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
 	log        = logging.MustGetLogger("zbackup")
+	exitStatus = 0
 )
 
 func main() {
@@ -144,6 +145,7 @@ Options:
 			log.Info("[%d]: starting backup", i)
 			if err := backupTasks[i].doBackup(); err != nil {
 				log.Error("[%d]: %s", i, err.Error())
+				exitStatus = 1
 			} else {
 				log.Info("[%d]: backup done", i)
 			}
@@ -152,4 +154,5 @@ Options:
 		}(i)
 	}
 	wg.Wait()
+	os.Exit(exitStatus)
 }

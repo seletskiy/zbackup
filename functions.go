@@ -241,7 +241,7 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 	}
 
 	log.Debug("[%d]: set remote %s 'zbackup:=true'...", this.id, dst+snapPostfix)
-	return this.rRunner.SetProperty("zbackup:", "true", dst+"@"+snapPostfix)
+	return this.rRunner.SetProperty(zfs.PROPERTY, "true", dst+"@"+snapPostfix)
 }
 
 func (this *BackupTask) cleanExpired() error {
