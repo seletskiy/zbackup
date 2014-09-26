@@ -136,11 +136,6 @@ func main() {
 		log.Error(err.Error())
 		return
 	}
-	defer func() {
-		if err := os.Remove(pidfile); err != nil {
-			log.Error(err.Error())
-		}
-	}()
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
 	b, err := NewBackuper(&c)
@@ -172,5 +167,9 @@ func main() {
 		}(i)
 	}
 	wg.Wait()
+
+	if err := os.Remove(pidfile); err != nil {
+		log.Error(err.Error())
+	}
 	os.Exit(exitCode)
 }
