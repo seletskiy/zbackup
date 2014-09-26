@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -15,6 +16,7 @@ const version = "1.4"
 var (
 	path       = "/etc/zbackup/zbackup.conf"
 	pidfile    = "/var/run/zbackup.pid"
+	logfile    = os.Stderr
 	key        = "/root/.ssh/id_rsa"
 	user       = "root"
 	remote     = "zroot"
@@ -25,14 +27,10 @@ var (
 	warnEmpty  = "no backup tasks"
 	format     = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
 	log        = logging.MustGetLogger("zbackup")
-	exitStatus = 0
-)
-
-func main() {
-	usage := `
+	usage      = `
 Usage:
   zbackup
-  zbackup [-h] [-t] [-p pidfile] [-v loglevel]
+  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile]
           [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
 
 Options:
@@ -40,6 +38,7 @@ Options:
   -t              test configuration and exit
   -p pidfile      set pidfile (default: /var/run/zbackup.pid)
   -v loglevel     set loglevel: info,debug (default: info)
+  -f logfile      set logfile (default: stderr)
   -c configfile   configuration-based backup (default: /etc/zbackup/zbackup.conf)
   -u zfsproperty  property-based backup, performs backup for fs, having this property
   --host host     set backup host: ${hostname}:${port}
@@ -48,11 +47,30 @@ Options:
   --iothreads num set iothreads (5 by default)
   --remote fs     set remote fs ('zroot' by default)
   --expire hours  set snapshot expire time in hours: '${n}h' (24h by default)`
+	exitCode = 0
+	c        Config
+)
 
-	var c Config
+func main() {
 	arguments, _ := docopt.Parse(usage, nil, true, version, false)
+
+	if arguments["-f"] != nil {
+		var err error
+		logfile, err = os.OpenFile(
+			arguments["-f"].(string),
+			os.O_RDWR|os.O_APPEND|os.O_CREATE,
+			0644,
+		)
+		if err != nil {
+			fmt.Fprintln(
+				os.Stderr,
+				arguments["-f"].(string)+": "+err.Error(),
+			)
+			os.Exit(exitCode)
+		}
+	}
 	loglevel := logging.INFO
-	logBackend := logging.NewLogBackend(os.Stderr, "", 0)
+	logBackend := logging.NewLogBackend(logfile, "", 0)
 	logging.SetBackend(logBackend)
 	logging.SetFormatter(logging.MustStringFormatter(format))
 	logging.SetLevel(loglevel, log.Module)
@@ -145,7 +163,7 @@ Options:
 			log.Info("[%d]: starting backup", i)
 			if err := backupTasks[i].doBackup(); err != nil {
 				log.Error("[%d]: %s", i, err.Error())
-				exitStatus = 1
+				exitCode = 1
 			} else {
 				log.Info("[%d]: backup done", i)
 			}
@@ -154,5 +172,5 @@ Options:
 		}(i)
 	}
 	wg.Wait()
-	os.Exit(exitStatus)
+	os.Exit(exitCode)
 }
