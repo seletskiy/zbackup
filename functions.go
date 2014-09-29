@@ -69,7 +69,6 @@ func loadConfigFromFile(c *Config, path string) error {
 	if _, err := toml.DecodeFile(path, c); err != nil {
 		return err
 	}
-
 	switch {
 	case c.User == "":
 		return errUser
@@ -107,11 +106,11 @@ func loadConfigFromArgs(c *Config, property, remote, expire string) error {
 		return err
 	}
 	for i, fs := range fsList {
-		val, err := lRunner.Property(fs, property)
+		out, err := lRunner.Property(fs, property)
 		if err != nil {
 			return err
 		}
-		if val == "true" {
+		if out == "true" {
 			c.Backup[i] = Backup{false, expire, fs, remote, ""}
 		}
 	}
@@ -272,11 +271,11 @@ func (this *BackupTask) cleanExpired() error {
 		return nil
 	}
 	for _, snap := range snapList {
-		val, err := this.rRunner.Property(snap, "zbackup:")
+		out, err := this.rRunner.Property(snap, "zbackup:")
 		if err != nil {
 			return err
 		}
-		if val != "true" {
+		if out != "true" {
 			log.Debug("[%d]: %s is not created by zbackup, skipping", this.id, snap)
 			continue
 		}
