@@ -11,10 +11,30 @@ import (
 	"github.com/op/go-logging"
 )
 
-const version = "1.4"
+const version = "1.4.3"
 
 var (
-	path       = "/etc/zbackup/zbackup.conf"
+	usage = `
+Usage:
+  zbackup
+  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile]
+          [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
+
+Options:
+  -h              this help
+  -t              test configuration and exit
+  -p pidfile      set pidfile (default: /var/run/zbackup.pid)
+  -v loglevel     set loglevel: info, debug (default: info)
+  -f logfile      set logfile (default: stderr)
+  -c configfile   config-based backup (default: /etc/zbackup/zbackup.conf)
+  -u zfsproperty  property-based backup (backing up all fs with zfsproperty)
+  --host host     set backup host: ${hostname}:${port}
+  --user user     set backup user: (default: root)
+  --key key       set keyfile: (default: /root/.ssh/id_rsa)
+  --iothreads num set max parallel tasks (default: 5)
+  --remote fs     set remote fs (default: 'zroot')
+  --expire hours  set snapshot expire time in hours: '${n}h' (default: 24h)`
+	conffile   = "/etc/zbackup/zbackup.conf"
 	pidfile    = "/var/run/zbackup.pid"
 	logfile    = os.Stderr
 	key        = "/root/.ssh/id_rsa"
@@ -27,35 +47,14 @@ var (
 	warnEmpty  = "no backup tasks"
 	format     = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
 	log        = logging.MustGetLogger("zbackup")
-	usage      = `
-Usage:
-  zbackup
-  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile]
-          [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
-
-Options:
-  -h              this help
-  -t              test configuration and exit
-  -p pidfile      set pidfile (default: /var/run/zbackup.pid)
-  -v loglevel     set loglevel: info,debug (default: info)
-  -f logfile      set logfile (default: stderr)
-  -c configfile   configuration-based backup (default: /etc/zbackup/zbackup.conf)
-  -u zfsproperty  property-based backup, performs backup for fs, having this property
-  --host host     set backup host: ${hostname}:${port}
-  --user user     set backup user: (root by default)
-  --key key       set keyfile: (/root/.ssh/id_rsa by default)
-  --iothreads num set iothreads (5 by default)
-  --remote fs     set remote fs ('zroot' by default)
-  --expire hours  set snapshot expire time in hours: '${n}h' (24h by default)`
-	exitCode = 0
-	c        Config
+	c          Config
+	err        error
 )
 
 func main() {
 	arguments, _ := docopt.Parse(usage, nil, true, version, false)
 
 	if arguments["-f"] != nil {
-		var err error
 		logfile, err = os.OpenFile(
 			arguments["-f"].(string),
 			os.O_RDWR|os.O_APPEND|os.O_CREATE,
@@ -66,7 +65,7 @@ func main() {
 				os.Stderr,
 				arguments["-f"].(string)+": "+err.Error(),
 			)
-			os.Exit(exitCode)
+			os.Exit(1)
 		}
 	}
 	loglevel := logging.INFO
@@ -88,9 +87,6 @@ func main() {
 			log.Info(warnLog)
 		}
 	}
-	if arguments["-c"] != nil {
-		path = arguments["-c"].(string)
-	}
 	if arguments["-u"] != nil {
 		property := arguments["-u"].(string)
 		host := arguments["--host"].(string)
@@ -109,17 +105,22 @@ func main() {
 		if arguments["--expire"] != nil {
 			expire = arguments["--expire"].(string)
 		}
-
-		c = Config{Host: host, User: user, Key: key, MaxIoThreads: iothreads}
-		if err := loadConfigFromArgs(&c, property, remote, expire); err != nil {
-			log.Error("error loading config:  %s", err.Error())
-			return
+		c = Config{
+			Host:         host,
+			User:         user,
+			Key:          key,
+			MaxIoThreads: iothreads,
 		}
+		err = loadConfigFromArgs(&c, property, remote, expire)
 	} else {
-		if err := loadConfigFromFile(&c, path); err != nil {
-			log.Error("error loading config:  %s", err.Error())
-			return
+		if arguments["-c"] != nil {
+			conffile = arguments["-c"].(string)
 		}
+		err = loadConfigFromFile(&c, conffile)
+	}
+	if err != nil {
+		log.Error("error loading config:  %s", err.Error())
+		os.Exit(1)
 	}
 	if arguments["-t"].(bool) {
 		log.Info("config ok")
@@ -127,30 +128,30 @@ func main() {
 	}
 	logging.SetLevel(loglevel, log.Module)
 
-	if _, err := os.Stat(pidfile); err == nil {
-		log.Error("cannot run: %s already exists", pidfile)
-		return
+	if _, err = os.Stat(pidfile); err == nil {
+		log.Error("%s already exists", pidfile)
+		os.Exit(1)
 	}
 	pid, err := os.Create(pidfile)
 	if err != nil {
-		log.Error(err.Error())
-		return
+		log.Error("cannot create %s: %s", pidfile, err.Error())
+		os.Exit(1)
 	}
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 
-	b, err := NewBackuper(&c)
+	backuper, err := NewBackuper(&c)
 	if err != nil {
 		log.Error(err.Error())
-		return
+		os.Exit(1)
 	}
-	backupTasks := b.setupTasks()
+	backupTasks := backuper.setupTasks()
 	if len(backupTasks) == 0 {
 		log.Warning(warnEmpty)
 		return
 	}
-
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, c.MaxIoThreads)
+	exitCode := 0
 	for i, _ := range backupTasks {
 		wg.Add(1)
 		mt <- struct{}{}
@@ -168,8 +169,9 @@ func main() {
 	}
 	wg.Wait()
 
-	if err := os.Remove(pidfile); err != nil {
+	if err = os.Remove(pidfile); err != nil {
 		log.Error(err.Error())
+		exitCode = 1
 	}
 	os.Exit(exitCode)
 }

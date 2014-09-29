@@ -51,7 +51,7 @@ var (
 	errFsRemote   = errors.New("[[backup]]: remote_root not declared")
 	errMask       = "'recursive' and regexp are mutually exclusive; skip this [[backup]] section"
 	errPrefix     = "'remote_prefix' and 'recursive' are mutually exclusive; skip this [[backup]] section"
-	errPrefixMask = "'remote_prefix' and regexp are mutually exclusive; skip this [[backup]] section"
+	errPrefixMask = "'remote_prefix' and 'regexp' are mutually exclusive; skip this [[backup]] section"
 	warnFsPrefix  = "'remote_prefix' set; fs with this name on remote may be overwritten"
 	warnExpire    = "expire_hours not set, will not delete old backups"
 	warnIoThread  = "max_io_threads not set, or set to '0', setting it to '1'"
@@ -60,6 +60,10 @@ var (
 	snapCurr      = "zbackup_curr"
 	snapNew       = "zbackup_new"
 	h, _          = os.Hostname()
+)
+
+const (
+	PROPERTY = "zbackup:"
 )
 
 func loadConfigFromFile(c *Config, path string) error {
@@ -97,31 +101,37 @@ func loadConfigFromFile(c *Config, path string) error {
 }
 
 func loadConfigFromArgs(c *Config, property, remote, expire string) error {
+	c.Backup = make([]Backup, 0)
 	lRunner, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return err
 	}
-	fsList, err := lRunner.ListFsByProperty(property)
+	fsList, err := lRunner.ListFs("", zfs.FS, "", true)
 	if err != nil {
 		return err
 	}
-	c.Backup = make([]Backup, len(fsList))
 	for i, fs := range fsList {
-		c.Backup[i] = Backup{false, expire, fs, remote, ""}
+		val, err := lRunner.Property(fs, property)
+		if err != nil {
+			return err
+		}
+		if val == "true" {
+			c.Backup[i] = Backup{false, expire, fs, remote, ""}
+		}
 	}
 	return nil
 }
 
 func NewBackuper(c *Config) (*Backuper, error) {
-	l, err := zfs.NewZfs(runcmd.NewLocalRunner())
+	lRunner, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return nil, err
 	}
-	r, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
+	rRunner, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
 	if err != nil {
 		return nil, err
 	}
-	return &Backuper{l, r, c}, nil
+	return &Backuper{lRunner, rRunner, c}, nil
 }
 
 func (this *Backuper) setupTasks() []BackupTask {
@@ -142,7 +152,7 @@ func (this *Backuper) setupTasks() []BackupTask {
 			continue
 		}
 
-		fsList, err := this.lRunner.ListFs(c[i].Local, zfs.FS, c[i].Recursive)
+		fsList, err := this.lRunner.ListFs(c[i].Local, zfs.FS, "", c[i].Recursive)
 		if err != nil {
 			log.Error(err.Error())
 			continue
@@ -191,6 +201,7 @@ func (this *BackupTask) doBackup() error {
 	if err := this.backupHelper(snapNew); err != nil {
 		return err
 	}
+
 	return this.cleanExpired()
 }
 
@@ -206,18 +217,18 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 	}
 
 	log.Debug("[%d]: create snapshot: %s...", id, snap)
-	if err := this.lRunner.CreateSnapshot(src, snap); err != nil {
+	if err := this.lRunner.CreateSnap(src, snap); err != nil {
 		return err
 	}
 
 	log.Debug("[%d]: start recieve snapshot on remote...", id)
-	cmdRecv, err := this.rRunner.RecvSnapshot(dst, snapPostfix)
+	cmdRecv, err := this.rRunner.RecvSnap(dst, snapPostfix)
 	if err != nil {
 		return err
 	}
 
 	log.Debug("[%d]: copy snapshot from local to remote...", this.id)
-	if err := this.lRunner.SendSnapshot(src, snapCurr, snapNew, cmdRecv); err != nil {
+	if err := this.lRunner.SendSnap(src, snapCurr, snapNew, cmdRecv); err != nil {
 		return err
 	}
 	if err := cmdRecv.Wait(); err != nil {
@@ -226,7 +237,6 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 
 	if snapNew != "" {
 		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", id)
-
 		if err := this.lRunner.DestroyFs(src + "@" + snapCurr); err != nil {
 			return err
 		}
@@ -236,12 +246,12 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 	}
 
 	log.Debug("[%d]: set remote %s 'readonly'...", this.id, dst)
-	if err := this.rRunner.SetProperty("readonly", "on", dst); err != nil {
+	if err := this.rRunner.SetProperty(dst, "readonly", "on"); err != nil {
 		return err
 	}
 
 	log.Debug("[%d]: set remote %s 'zbackup:=true'...", this.id, dst+snapPostfix)
-	return this.rRunner.SetProperty(zfs.PROPERTY, "true", dst+"@"+snapPostfix)
+	return this.rRunner.SetProperty(dst+"@"+snapPostfix, PROPERTY, "true")
 }
 
 func (this *BackupTask) cleanExpired() error {
@@ -249,55 +259,56 @@ func (this *BackupTask) cleanExpired() error {
 	dst := this.dst
 	expire := this.expire
 
-	log.Debug("[%d]: start cleaning expired snapshot on remote, expire: %s", id, expire)
-	log.Debug("[%d]: get list remote snapshots...", id)
-	snapList, err := this.rRunner.ListFs(dst, zfs.SNAP, true)
-	if err != nil {
-		return err
-	}
+	log.Debug("[%d]: cleaning expired snapshots, expire: %s", id, expire)
 	if expire == "" {
-		log.Info("[%d]: %s", id, expire)
+		log.Info("[%d]: expire is not set, exit", id)
 		return nil
 	}
 
-	recent, err := this.rRunner.RecentSnapshot(dst)
+	recent, err := this.rRunner.RecentSnap(dst, PROPERTY)
 	if err != nil {
 		return err
 	}
 
-	log.Debug("[%d]: determines expired snapshot...", id)
-	for _, snapshot := range snapList {
-		prop, err := this.rRunner.Property("zbackup:", snapshot)
+	log.Debug("[%d]: get list remote snapshots...", id)
+	snapList, err := this.rRunner.ListFs(dst, zfs.SNAP, PROPERTY, true)
+	if err != nil {
+		return err
+	}
+	if len(snapList) == 1 {
+		log.Info("[%d] only one snapshot, nothing to delete", id)
+		return nil
+	}
+	for _, snap := range snapList {
+		val, err := this.rRunner.Property(snap, "zbackup:")
 		if err != nil {
 			return err
 		}
-		if prop != "true" {
-			log.Debug("[%d]: %s is not created by zbackup, skipping", this.id, snapshot)
+		if val != "true" {
+			log.Debug("[%d]: %s is not created by zbackup, skipping", this.id, snap)
 			continue
 		}
-
 		if this.expire == "lastone" {
-			if snapshot != recent {
-				log.Debug("[%d]: %s will be destroy (not recent)", id, snapshot)
-				if err := this.rRunner.DestroyFs(snapshot); err != nil {
-					log.Error("[%d]: error destroying %s: %s", id, snapshot, err.Error())
+			if snap != recent {
+				log.Debug("[%d]: %s will be destroy (not recent)", id, snap)
+				if err := this.rRunner.DestroyFs(snap); err != nil {
+					log.Error("[%d]: error destroying %s: %s", id, snap, err.Error())
 				}
 			}
 			continue
 		}
 
-		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snapshot, "@")[1], time.Local)
+		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snap, "@")[1], time.Local)
 		expire, _ := time.ParseDuration(expire)
-
 		if time.Since(poolDate) > expire {
-			log.Debug("[%d]: %s will be destroy (>%s)", id, snapshot, expire)
+			log.Debug("[%d]: %s will be destroy (>%s)", id, snap, expire)
 
-			if err := this.rRunner.DestroyFs(snapshot); err != nil {
-				log.Error("[%d]: error destroying %s: %s", id, snapshot, err.Error())
+			if err := this.rRunner.DestroyFs(snap); err != nil {
+				log.Error("[%d]: error destroying %s: %s", id, snap, err.Error())
 				continue
 			}
 		} else {
-			log.Debug("[%d]: %s not exipred, skipping", id, snapshot)
+			log.Debug("[%d]: %s not exipred, skipping", id, snap)
 		}
 	}
 	return nil
