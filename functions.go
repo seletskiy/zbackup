@@ -49,7 +49,6 @@ var (
 	errBackup     = errors.New("[[backup]]: section not declared")
 	errFsLocal    = errors.New("[[backup]]: local not declared")
 	errFsRemote   = errors.New("[[backup]]: remote_root not declared")
-	errMask       = "'recursive' and regexp are mutually exclusive; skip this [[backup]] section"
 	errPrefix     = "'remote_prefix' and 'recursive' are mutually exclusive; skip this [[backup]] section"
 	errPrefixMask = "'remote_prefix' and 'regexp' are mutually exclusive; skip this [[backup]] section"
 	warnFsPrefix  = "'remote_prefix' set; fs with this name on remote may be overwritten"
@@ -60,10 +59,7 @@ var (
 	snapCurr      = "zbackup_curr"
 	snapNew       = "zbackup_new"
 	h, _          = os.Hostname()
-)
-
-const (
-	PROPERTY = "zbackup:"
+	PROPERTY      = "zbackup:"
 )
 
 func loadConfigFromFile(c *Config, path string) error {
@@ -141,9 +137,6 @@ func (this *Backuper) setupTasks() []BackupTask {
 
 	for i := range this.c.Backup {
 		switch {
-		case strings.Contains(c[i].Local, "*") && c[i].Recursive:
-			log.Error("%s: %s", c[i].Local, errMask)
-			continue
 		case c[i].RemotePrefix != "" && c[i].Recursive:
 			log.Error("%s: %s", c[i].Local, errPrefix)
 			continue
@@ -163,7 +156,6 @@ func (this *Backuper) setupTasks() []BackupTask {
 			if c[i].RemotePrefix != "" {
 				dst = c[i].RemoteRoot + "/" + c[i].RemotePrefix
 			}
-
 			bt = append(bt, BackupTask{
 				taskid,
 				src,
