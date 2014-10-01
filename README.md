@@ -17,8 +17,8 @@ go install
 
 ###Description and examples
 
-zbackup can run in two modes:
-####command-line mode:
+####zbackup can run in two modes:
+#####command-line mode:
 in this mode zbackup perform backup filesystems,
 which have a user-defined zfs-property with value 'true'
 (colon in property name is part of his name;
@@ -37,7 +37,7 @@ after setting this property to fs, you can run zbackup:
 zbackup -u zbackup: --host 192.186.20.80 --user root --key /root/.ssh/id_rsa
 ```
 
-####configuration-file mode
+#####configuration-file mode
 in this mode zbackup performs backup filsystem, described in
 config file ('-c' key)
 
