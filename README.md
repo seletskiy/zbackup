@@ -1,4 +1,4 @@
-###Now only dev version available: not recommended use it for production backups!
+#####Now only dev version available: not recommended use it for production backups!
 
 ### zbackup
 
@@ -37,7 +37,7 @@ after setting this property to fs, you can run zbackup:
 zbackup -u zbackup: --host 192.186.20.80 --user root --key /root/.ssh/id_rsa
 ```
 
-#####configuration-file mode
+#####configuration-file mode:
 in this mode zbackup performs backup filsystem, described in
 config file ('-c' key)
 
