@@ -6,7 +6,7 @@ zbackup is a multithreading zfs backuping (via snapshots) tool
 
 
 ###Installation:
-##from sources:
+####from sources:
 ```bash
 go get github.com/theairkit/runcmd
 go get github.com/theairkit/zfs
@@ -14,16 +14,16 @@ git clone github.com/theairkit/zbackup .
 go install
 ```
 
-##for archlinux users there are PKGBUILD file:
+####for archlinux users there are PKGBUILD file:
 ```bash
 git clone github.com/theairkit/zbackup .
 makepkg
 ```
 
-### Description and examples
+###Description and examples
 
 zbackup can run in two modes:
-#command-line mode:
+####command-line mode:
 in this mode zbackup perform backup filesystems,
 which have a user-defined zfs-property with value 'true'
 (colon in property name is part of his name;
@@ -42,7 +42,7 @@ after setting this property to fs, you can run zbackup:
 zbackup -u zbackup: --host 192.186.20.80 --user root --key /root/.ssh/id_rsa
 ```
 
-#configuration-file mode
+####configuration-file mode
 in this mode zbackup performs backup filsystem, described in
 config file ('-c' key)
 
@@ -103,5 +103,5 @@ Options:
   --expire hours  set snapshot expire time in hours: '${n}h' (default: 24h)
 ```
 
-###Some internals
+####Some internals
 TODO
