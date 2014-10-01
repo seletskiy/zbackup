@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -101,11 +102,11 @@ func loadConfigFromArgs(c *Config, property, remote, expire string) error {
 	if err != nil {
 		return err
 	}
-	fsList, err := lRunner.ListFs("", zfs.FS, "", true)
+	list, err := lRunner.List("", zfs.FS, true)
 	if err != nil {
 		return err
 	}
-	for i, fs := range fsList {
+	for i, fs := range list {
 		out, err := lRunner.Property(fs, property)
 		if err != nil {
 			return err
@@ -135,25 +136,20 @@ func (this *Backuper) setupTasks() []BackupTask {
 	c := this.c.Backup
 
 	for i := range this.c.Backup {
-		switch {
-		case c[i].RemotePrefix != "" && c[i].Recursive:
+		if c[i].RemotePrefix != "" && c[i].Recursive {
 			log.Error("%s: %s", c[i].Local, errPrefix)
 			continue
-		case c[i].RemotePrefix != "" && strings.Contains(c[i].Local, "*"):
-			log.Error("%s: %s", c[i].Local, errPrefixMask)
-			continue
 		}
 
-		fsList, err := this.lRunner.ListFs(c[i].Local, zfs.FS, "", c[i].Recursive)
+		list, err := this.lRunner.List(c[i].Local, zfs.FS, c[i].Recursive)
 		if err != nil {
-			log.Error(err.Error())
+			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
-
-		for _, src := range fsList {
+		for _, src := range list {
 			dst := c[i].RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
 			if c[i].RemotePrefix != "" {
-				dst = c[i].RemoteRoot + "/" + c[i].RemotePrefix
+				dst = dst + "/" + c[i].RemotePrefix
 			}
 			bt = append(bt, BackupTask{
 				taskid,
@@ -175,6 +171,7 @@ func (this *BackupTask) doBackup() error {
 	src := this.src
 	dst := this.dst
 
+	// Snapshot already exists, wait minute and try ti run again:
 	log.Debug("[%d]: check %s exists", id, dst+"@"+snapPostfix)
 	if exist, err := this.rRunner.ExistSnap(dst, snapPostfix); err != nil || exist {
 		if err != nil {
@@ -182,6 +179,8 @@ func (this *BackupTask) doBackup() error {
 		}
 		return errors.New(dst + "@" + snapPostfix + " " + snapExist)
 	}
+
+	// Check, if backup for the first time or not:
 	log.Debug("[%d]: check %s exists", id, src+"@"+snapCurr)
 	if exist, err := this.lRunner.ExistSnap(src, snapCurr); err != nil || !exist {
 		if err != nil {
@@ -189,10 +188,13 @@ func (this *BackupTask) doBackup() error {
 		}
 		snapNew = ""
 	}
+
+	// Backup:
 	if err := this.backupHelper(snapNew); err != nil {
 		return err
 	}
 
+	// Cleanup:
 	return this.cleanExpired()
 }
 
@@ -219,7 +221,19 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 	}
 
 	log.Debug("[%d]: copy snapshot from local to remote...", this.id)
-	if err := this.lRunner.SendSnap(src, snapCurr, snapNew, cmdRecv); err != nil {
+	cmdSend, err := this.lRunner.SendSnap(src, snapCurr, snapNew, cmdRecv)
+	if err != nil {
+		return err
+	}
+
+	// Correct close send/recv
+	// EOF here is not error: http://golang.org/pkg/io/
+	// EOF is the error returned by Read when no more input is available.
+	// Functions should return EOF only to signal a graceful end of input.
+	if err := cmdSend.Wait(); err != nil {
+		return err
+	}
+	if err := cmdRecv.StdinPipe().Close(); err != nil && err != io.EOF {
 		return err
 	}
 	if err := cmdRecv.Wait(); err != nil {
@@ -228,10 +242,10 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 
 	if snapNew != "" {
 		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", id)
-		if err := this.lRunner.DestroyFs(src + "@" + snapCurr); err != nil {
+		if err := this.lRunner.Destroy(src + "@" + snapCurr); err != nil {
 			return err
 		}
-		if err := this.lRunner.RenameFs(src+"@"+snapNew, src+"@"+snapCurr); err != nil {
+		if err := this.lRunner.RenameSnap(src, snapNew, snapCurr); err != nil {
 			return err
 		}
 	}
@@ -262,15 +276,15 @@ func (this *BackupTask) cleanExpired() error {
 	}
 
 	log.Debug("[%d]: get list remote snapshots...", id)
-	snapList, err := this.rRunner.ListFs(dst, zfs.SNAP, PROPERTY, true)
+	list, err := this.rRunner.ListFsSnap(dst)
 	if err != nil {
 		return err
 	}
-	if len(snapList) == 1 {
+	if len(list) == 1 {
 		log.Info("[%d] only one snapshot, nothing to delete", id)
 		return nil
 	}
-	for _, snap := range snapList {
+	for _, snap := range list {
 		out, err := this.rRunner.Property(snap, "zbackup:")
 		if err != nil {
 			return err
@@ -282,19 +296,23 @@ func (this *BackupTask) cleanExpired() error {
 		if this.expire == "lastone" {
 			if snap != recent {
 				log.Debug("[%d]: %s will be destroy (not recent)", id, snap)
-				if err := this.rRunner.DestroyFs(snap); err != nil {
+				if err := this.rRunner.Destroy(snap); err != nil {
 					log.Error("[%d]: error destroying %s: %s", id, snap, err.Error())
 				}
 			}
 			continue
 		}
 
-		poolDate, _ := time.ParseInLocation(timeFormat, strings.Split(snap, "@")[1], time.Local)
+		poolDate, _ := time.ParseInLocation(
+			timeFormat,
+			strings.Split(snap, "@")[1],
+			time.Local,
+		)
 		expire, _ := time.ParseDuration(expire)
 		if time.Since(poolDate) > expire {
 			log.Debug("[%d]: %s will be destroy (>%s)", id, snap, expire)
 
-			if err := this.rRunner.DestroyFs(snap); err != nil {
+			if err := this.rRunner.Destroy(snap); err != nil {
 				log.Error("[%d]: error destroying %s: %s", id, snap, err.Error())
 				continue
 			}

@@ -11,13 +11,13 @@ import (
 	"github.com/op/go-logging"
 )
 
-const version = "1.4.3"
+const version = "1.4.5"
 
 var (
 	usage = `
 Usage:
   zbackup
-  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile]
+  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile] [--dry-run]
           [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
 
 Options:
@@ -26,6 +26,7 @@ Options:
   -p pidfile      set pidfile (default: /var/run/zbackup.pid)
   -v loglevel     set loglevel: info, debug (default: info)
   -f logfile      set logfile (default: stderr)
+  --dry-run       show which fs will backup and exit
   -c configfile   config-based backup (default: /etc/zbackup/zbackup.conf)
   -u zfsproperty  property-based backup (backing up all fs with zfsproperty)
   --host host     set backup host: ${hostname}:${port}
@@ -50,6 +51,7 @@ Options:
 	log        = logging.MustGetLogger("zbackup")
 	c          Config
 	err        error
+	exitCode   = 0
 )
 
 func main() {
@@ -150,26 +152,32 @@ func main() {
 		log.Warning(warnEmpty)
 		return
 	}
-	wg := sync.WaitGroup{}
-	mt := make(chan struct{}, c.MaxIoThreads)
-	exitCode := 0
-	for i, _ := range backupTasks {
-		wg.Add(1)
-		mt <- struct{}{}
-		go func(i int) {
-			log.Info("[%d]: starting backup", i)
-			if err := backupTasks[i].doBackup(); err != nil {
-				log.Error("[%d]: %s", i, err.Error())
-				exitCode = 1
-			} else {
-				log.Info("[%d]: backup done", i)
-			}
-			<-mt
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
 
+	if arguments["--dry-run"].(bool) {
+		log.Info("--dry-run set, only show backup tasks:")
+		for _, b := range backupTasks {
+			log.Info("%s -> %s %s", b.src, backuper.c.Host, b.dst)
+		}
+	} else {
+		wg := sync.WaitGroup{}
+		mt := make(chan struct{}, c.MaxIoThreads)
+		for i, _ := range backupTasks {
+			wg.Add(1)
+			mt <- struct{}{}
+			go func(i int) {
+				log.Info("[%d]: starting backup", i)
+				if err := backupTasks[i].doBackup(); err != nil {
+					log.Error("[%d]: %s", i, err.Error())
+					exitCode = 1
+				} else {
+					log.Info("[%d]: backup done", i)
+				}
+				<-mt
+				wg.Done()
+			}(i)
+		}
+		wg.Wait()
+	}
 	if err = os.Remove(pidfile); err != nil {
 		log.Error(err.Error())
 		exitCode = 1
