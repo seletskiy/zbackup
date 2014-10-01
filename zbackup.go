@@ -141,6 +141,7 @@ func main() {
 		os.Exit(1)
 	}
 	pid.WriteString(strconv.Itoa(syscall.Getpid()))
+	defer deletePid()
 
 	backuper, err := NewBackuper(&c)
 	if err != nil {
@@ -178,9 +179,4 @@ func main() {
 		}
 		wg.Wait()
 	}
-	if err = os.Remove(pidfile); err != nil {
-		log.Error(err.Error())
-		exitCode = 1
-	}
-	os.Exit(exitCode)
 }

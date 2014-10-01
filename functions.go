@@ -106,13 +106,13 @@ func loadConfigFromArgs(c *Config, property, remote, expire string) error {
 	if err != nil {
 		return err
 	}
-	for i, fs := range list {
+	for _, fs := range list {
 		out, err := lRunner.Property(fs, property)
 		if err != nil {
 			return err
 		}
 		if out == "true" {
-			c.Backup[i] = Backup{false, expire, fs, remote, ""}
+			c.Backup = append(c.Backup, Backup{false, expire, fs, remote, ""})
 		}
 	}
 	return nil
@@ -226,8 +226,7 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 		return err
 	}
 
-	// Correct close send/recv
-	// EOF here is not error: http://golang.org/pkg/io/
+	// In this case EOF is not error: http://golang.org/pkg/io/
 	// EOF is the error returned by Read when no more input is available.
 	// Functions should return EOF only to signal a graceful end of input.
 	if err := cmdSend.Wait(); err != nil {
@@ -321,4 +320,12 @@ func (this *BackupTask) cleanExpired() error {
 		}
 	}
 	return nil
+}
+
+func deletePid() {
+	if err = os.Remove(pidfile); err != nil {
+		log.Error(err.Error())
+		exitCode = 1
+	}
+	os.Exit(exitCode)
 }
