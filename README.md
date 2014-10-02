@@ -99,7 +99,10 @@ Options:
 ```
 
 ####Some internals
-For every backuped fs, zbackup:
+* zbackup parse config (or command-linme options) and create backup tasks
+* based on max iothreads option, run this tasks in parallel
+
+For every backup task:
 * check for local fs snapshot with name: 'fs@zbackup_curr'
 
 * if snapshot not exists - assume, that we run first time:
