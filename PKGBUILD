@@ -1,10 +1,9 @@
-# Maintainer: Mike Prokopchuk <m.prokopchuk@office.ngs.ru>
+# Maintainer: theairkit <theairkit@gmail.com>
 pkgname=zbackup-git
 pkgver=1
 pkgrel=4.5
 pkgdesc='zbackup, multithreading zfs backuper written on golang'
 arch=("x86_64")
-url='https://github.com/theairkit/zbackup'
 license=('unknown')
 provides=('zbackup-git')
 backup=('etc/zbackup/zbackup.conf')
