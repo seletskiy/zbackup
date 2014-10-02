@@ -60,11 +60,11 @@ remote_root    = "zroot"
 ...
 [[backup]]
 ...
-
 [[backup]]
 ```
 
-after creating configuration file, check config, dry-run and perform zbackup:
+after creating configuration file, check config, start dry-run,
+and then perform zbackup:
 ```bash
 zbackup -c /etc/zbackup/zbackup.conf -t
 14:53:45.955870 9892 INFO config ok
