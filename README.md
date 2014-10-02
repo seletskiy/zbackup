@@ -14,6 +14,13 @@ git clone github.com/theairkit/zbackup .
 go install
 ```
 
+for archlinux users there are PKGBUILD file:
+```bash
+git clone https://github.com/theairkit/zbackup.git
+cd zbackup
+git checkout pkgbuild
+makepkg
+```
 
 ###Description and examples
 
