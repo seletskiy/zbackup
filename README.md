@@ -104,7 +104,7 @@ For every backuped fs, zbackup:
 ```bash
 snapname@zbackup_curr
 ```
-if snapshot not exists - assume, that we run first time:
+* if snapshot not exists - assume, that we run first time:
 ** create snapshot 'fs@zbackup_curr'
 ** local: zfs send fs@zbackup_curr
 ** remote: zfs recv $remote_root/$local_root-$fs@timestamp
