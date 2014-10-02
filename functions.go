@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -123,7 +126,9 @@ func NewBackuper(c *Config) (*Backuper, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("before")
 	rRunner, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
+	fmt.Println("after")
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +325,34 @@ func (this *BackupTask) cleanExpired() error {
 		}
 	}
 	return nil
+}
+
+func createPid() {
+	if arguments["-f"] != nil {
+		logfile, err = os.OpenFile(
+			arguments["-f"].(string),
+			os.O_RDWR|os.O_APPEND|os.O_CREATE,
+			0644,
+		)
+		if err != nil {
+			fmt.Fprintln(
+				os.Stderr,
+				arguments["-f"].(string)+": "+err.Error(),
+			)
+			os.Exit(1)
+		}
+	}
+
+	if _, err = os.Stat(pidfile); err == nil {
+		log.Error("%s already exists", pidfile)
+		os.Exit(1)
+	}
+	pid, err := os.Create(pidfile)
+	if err != nil {
+		log.Error("cannot create %s: %s", pidfile, err.Error())
+		os.Exit(1)
+	}
+	pid.WriteString(strconv.Itoa(syscall.Getpid()))
 }
 
 func deletePid() {

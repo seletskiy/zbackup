@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"sync"
-	"syscall"
 
 	"github.com/docopt/docopt-go"
 	"github.com/op/go-logging"
@@ -26,15 +24,15 @@ Options:
   -p pidfile      set pidfile (default: /var/run/zbackup.pid)
   -v loglevel     set loglevel: info, debug (default: info)
   -f logfile      set logfile (default: stderr)
-  --dry-run       show which fs will backup and exit
+  --dry-run       show fs will be backup and exit
   -c configfile   config-based backup (default: /etc/zbackup/zbackup.conf)
-  -u zfsproperty  property-based backup (backing up all fs with zfsproperty)
+  -u zfsproperty  property-based backup (backing up all fs with zfs property)
   --host host     set backup host: ${hostname}:${port}
   --user user     set backup user: (default: root)
   --key key       set keyfile: (default: /root/.ssh/id_rsa)
   --iothreads num set max parallel tasks (default: 5)
   --remote fs     set remote fs (default: 'zroot')
-  --expire hours  set snapshot expire time in hours: '${n}h' (default: 24h)`
+  --expire hours  set snapshot expire time in hours or 'lastone': (default: 24h)`
 
 	conffile   = "/etc/zbackup/zbackup.conf"
 	pidfile    = "/var/run/zbackup.pid"
@@ -52,25 +50,15 @@ Options:
 	c          Config
 	err        error
 	exitCode   = 0
+	arguments  map[string]interface{}
 )
 
 func main() {
-	arguments, _ := docopt.Parse(usage, nil, true, version, false)
+	arguments, _ = docopt.Parse(usage, nil, true, version, false)
 
-	if arguments["-f"] != nil {
-		logfile, err = os.OpenFile(
-			arguments["-f"].(string),
-			os.O_RDWR|os.O_APPEND|os.O_CREATE,
-			0644,
-		)
-		if err != nil {
-			fmt.Fprintln(
-				os.Stderr,
-				arguments["-f"].(string)+": "+err.Error(),
-			)
-			os.Exit(1)
-		}
-	}
+	createPid()
+	defer deletePid()
+
 	loglevel := logging.INFO
 	logBackend := logging.NewLogBackend(logfile, "", 0)
 	logging.SetBackend(logBackend)
@@ -123,7 +111,8 @@ func main() {
 	}
 	if err != nil {
 		log.Error("error loading config:  %s", err.Error())
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
 	if arguments["-t"].(bool) {
 		log.Info("config ok")
@@ -131,22 +120,11 @@ func main() {
 	}
 	logging.SetLevel(loglevel, log.Module)
 
-	if _, err = os.Stat(pidfile); err == nil {
-		log.Error("%s already exists", pidfile)
-		os.Exit(1)
-	}
-	pid, err := os.Create(pidfile)
-	if err != nil {
-		log.Error("cannot create %s: %s", pidfile, err.Error())
-		os.Exit(1)
-	}
-	pid.WriteString(strconv.Itoa(syscall.Getpid()))
-	defer deletePid()
-
 	backuper, err := NewBackuper(&c)
 	if err != nil {
 		log.Error(err.Error())
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
 	backupTasks := backuper.setupTasks()
 	if len(backupTasks) == 0 {
