@@ -55,7 +55,8 @@ var (
 	errFsRemote   = errors.New("[[backup]]: remote_root not declared")
 	errPrefix     = "'remote_prefix' and 'recursive' are mutually exclusive; skip this [[backup]] section"
 	errPrefixMask = "'remote_prefix' and 'regexp' are mutually exclusive; skip this [[backup]] section"
-	warnFsPrefix  = "'remote_prefix' set; fs with this name on remote may be overwritten"
+	errRegex      = "'regexp' and 'recursive=true' are mutually exclusive; skip this [[backup]] section"
+	warnPrefixFs  = "'remote_prefix' set; fs with this name on remote may be overwritten"
 	warnExpire    = "expire_hours not set, will not delete old backups"
 	warnIoThread  = "max_io_threads not set, or set to '0', setting it to '1'"
 	snapExist     = "already exists, wait next minute and run again"
@@ -93,7 +94,7 @@ func loadConfigFromFile(c *Config, path string) error {
 		case c.Backup[i].RemoteRoot == "":
 			return errFsRemote
 		case c.Backup[i].RemotePrefix != "":
-			log.Warning(warnFsPrefix)
+			log.Warning(warnPrefixFs)
 		}
 	}
 	return nil
@@ -126,9 +127,7 @@ func NewBackuper(c *Config) (*Backuper, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("before")
 	rRunner, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
-	fmt.Println("after")
 	if err != nil {
 		return nil, err
 	}
@@ -137,21 +136,27 @@ func NewBackuper(c *Config) (*Backuper, error) {
 
 func (this *Backuper) setupTasks() []BackupTask {
 	var bt []BackupTask
+	var list []string
 	taskid := 0
 	c := this.c.Backup
 
-	for i := range this.c.Backup {
+	for i := range c {
 		if c[i].RemotePrefix != "" && c[i].Recursive {
 			log.Error("%s: %s", c[i].Local, errPrefix)
 			continue
 		}
+		if c[i].Recursive && strings.HasSuffix(c[i].Local, "*") {
+			log.Error("%s: %s", c[i].Local, errRegex)
+			continue
+		}
 
-		list, err := this.lRunner.List(c[i].Local, zfs.FS, c[i].Recursive)
+		list, err = this.lRunner.List(c[i].Local, zfs.FS, c[i].Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
 		for _, src := range list {
+
 			dst := c[i].RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
 			if c[i].RemotePrefix != "" {
 				dst = c[i].RemoteRoot + "/" + c[i].RemotePrefix
