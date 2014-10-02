@@ -108,11 +108,13 @@ For every backuped fs, zbackup:
  * remote: zfs recv $remote_root/$local_root-$fs@timestamp
  * set 'readonly=on' for remote fs
  * set 'zbackup: true' for remote snapshot
+
 * if snapshot 'snapname@zbackup_curr'  exists:
  * create snapshot 'fs@zbackup_new'
  * local: zfs send -i fs@zbackup_new fs@zbackup@curr
  * remote: zfs recv zfs recv $remote_root/$local_root-$fs@timestamp
  * set 'zbackup: true' for remote snapshot
+
 * run cleanup:
  * by 'lastone': delete all remote snapshots with 'zbackup=true' for this fs, except last one
  * by expire time: delete all remote snapshots, which created ealry that expire
