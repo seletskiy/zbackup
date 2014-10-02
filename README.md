@@ -41,9 +41,12 @@ zbackup -u zbackup: --host 192.186.20.80 --user root --key /root/.ssh/id_rsa
 in this mode zbackup performs backup filsystem, described in
 config file ('-c' key)
 
-configuration file have a TOML format and very simple, e.g.:
+configuration file have a TOML format and very simple:
+```bash
+cat /etc/zbackup/zbackup.conf
+```
+
 ```toml
-cat /etc/zbackup/zbackup.conf 
 user           = "root"
 host           = "192.168.20.80:22"
 key            = "/root/.ssh/id_rsa"
@@ -54,6 +57,11 @@ recursive      = true
 expire_hours   = "1h"
 local          = "zroot/src"
 remote_root    = "zroot"
+...
+[[backup]]
+...
+
+[[backup]]
 ```
 
 after creating configuration file, check config, dry-run and perform zbackup:
