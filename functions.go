@@ -154,7 +154,7 @@ func (this *Backuper) setupTasks() []BackupTask {
 		for _, src := range list {
 			dst := c[i].RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
 			if c[i].RemotePrefix != "" {
-				dst = dst + "/" + c[i].RemotePrefix
+				dst = c[i].RemoteRoot + "/" + c[i].RemotePrefix
 			}
 			bt = append(bt, BackupTask{
 				taskid,
