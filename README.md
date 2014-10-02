@@ -100,7 +100,7 @@ Options:
 
 ####Some internals
 For every backuped fs, zbackup:
-* check for local fs snapshot with name: 'snapname@zbackup_curr'
+* check for local fs snapshot with name: 'fs@zbackup_curr'
 
 * if snapshot not exists - assume, that we run first time:
  * create snapshot 'fs@zbackup_curr'
@@ -109,7 +109,7 @@ For every backuped fs, zbackup:
  * set 'readonly=on' for remote fs
  * set 'zbackup: true' for remote snapshot
 
-* if snapshot 'snapname@zbackup_curr'  exists:
+* if 'fs@zbackup_curr'  exists:
  * create snapshot 'fs@zbackup_new'
  * local: zfs send -i fs@zbackup_new fs@zbackup@curr
  * remote: zfs recv zfs recv $remote_root/$local_root-$fs@timestamp
@@ -118,3 +118,7 @@ For every backuped fs, zbackup:
 * run cleanup:
  * by 'lastone': delete all remote snapshots with 'zbackup=true' for this fs, except last one
  * by expire time: delete all remote snapshots, which created ealry that expire
+
+* rotate local snapshots:
+ * delete local:'fs@zbackup_curr'
+ * rename local:'fs@zbackup_new' to 'fs@zbackup_curr'
