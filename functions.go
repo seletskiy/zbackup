@@ -52,8 +52,7 @@ func NewBackuper(c *Config) (*Backuper, error) {
 }
 
 func (backuper *Backuper) setupTasks() []BackupTask {
-	var tasks []BackupTask
-	var list []string
+	tasks := make([]BackupTask, 0)
 	taskid := 0
 	config := backuper.config.Backup
 
@@ -67,12 +66,12 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 			continue
 		}
 
-		list, err = backuper.srcZfs.List(backup.Local, zfs.FS, backup.Recursive)
+		fsList, err := backuper.srcZfs.List(backup.Local, zfs.FS, backup.Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
-		for _, src := range list {
+		for _, src := range fsList {
 			dst := backup.RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
 			if backup.RemotePrefix != "" {
 				dst = backup.RemoteRoot + "/" + backup.RemotePrefix
