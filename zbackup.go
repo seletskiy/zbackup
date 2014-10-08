@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -9,105 +10,96 @@ import (
 	"github.com/op/go-logging"
 )
 
-const version = "1.4.5"
-
 var (
+	version = "1.4.5"
+
 	usage = `
 Usage:
-  zbackup
-  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile] [--dry-run]
-          [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
+	zbackup -h
+	zbackup --version
+	zbackup [-c config]    [-t] [--dry-run] [-p pidfile] [-v loglevel] [-f logfile]
+	zbackup -u zfsproperty [-t] [--dry-run] [-p pidfile] [-v loglevel] [-f logfile]
+    --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours]
 
 Options:
-  -h              this help
-  -t              test configuration and exit
-  -p pidfile      set pidfile (default: /var/run/zbackup.pid)
-  -v loglevel     set loglevel: info, debug (default: info)
-  -f logfile      set logfile (default: stderr)
-  --dry-run       show fs will be backup and exit
-  -c configfile   config-based backup (default: /etc/zbackup/zbackup.conf)
-  -u zfsproperty  property-based backup (backing up all fs with zfs property)
-  --host host     set backup host: ${hostname}:${port}
-  --user user     set backup user: (default: root)
-  --key key       set keyfile: (default: /root/.ssh/id_rsa)
-  --iothreads num set max parallel tasks (default: 5)
-  --remote fs     set remote fs (default: 'zroot')
-  --expire hours  set snapshot expire time in hours or 'lastone': (default: 24h)`
+	-h              this help
+	--version       show version and exit
+	-c config       configuration-based backup [default: /etc/zbackup/zbackup.conf]
+	-t              test configuration and exit
+	--dry-run       show fs will be backup and exit
+	-p pidfile      set pidfile [default: /var/run/zbackup.pid]
+	-v loglevel     set loglevel: info, debug [default: info]
+	-f logfile      set logfile [default: stderr]
+	-u zfsproperty  property-based backup
+	--host host     set backup host ${hostname}:${port}
+	--user user     set backup user [default: root]
+	--key key       set keyfile [default: /root/.ssh/id_rsa]
+	--iothreads num set max parallel tasks [default: 5]
+	--remote fs     set remote root fs [default: 'zroot']
+	--expire hours  set expire time in hours or 'lastone' [default: 24h]`
 
-	conffile   = "/etc/zbackup/zbackup.conf"
-	pidfile    = "/var/run/zbackup.pid"
-	logfile    = os.Stderr
-	key        = "/root/.ssh/id_rsa"
-	user       = "root"
-	remote     = "zroot"
-	expire     = "24h"
-	iothreads  = 5
-	errPidfile = "pidfile already exists: "
-	warnLog    = "unknown loglevel, using loglevel: info"
-	warnEmpty  = "no backup tasks"
-	format     = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
-	log        = logging.MustGetLogger("zbackup")
-	c          Config
-	err        error
-	exitCode   = 0
-	arguments  map[string]interface{}
+	err       error
+	config    *Config
+	loglevel  logging.Level
+	log       = logging.MustGetLogger("zbackup")
+	logFormat = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
+	warnEmpty = "no backup tasks"
+
+	exitCode = 0
 )
 
 func main() {
-	arguments, _ = docopt.Parse(usage, nil, true, version, false)
+	// Parse command-line keys:
+	arguments, _ := docopt.Parse(usage, nil, true, version, false)
 
-	createPid()
-	defer deletePid()
-
-	loglevel := logging.INFO
-	logBackend := logging.NewLogBackend(logfile, "", 0)
-	logging.SetBackend(logBackend)
-	logging.SetFormatter(logging.MustStringFormatter(format))
-	logging.SetLevel(loglevel, log.Module)
-
-	if arguments["-p"] != nil {
-		pidfile = arguments["-p"].(string)
+	// Handle pidfile:
+	pidfile := arguments["-p"].(string)
+	if err := createPidfile(pidfile); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
-	if arguments["-v"] != nil {
-		switch arguments["-v"].(string) {
-		case "info":
-			loglevel = logging.INFO
-		case "debug":
-			loglevel = logging.DEBUG
-		default:
-			log.Info(warnLog)
-		}
+	defer deletePidfile(pidfile)
+
+	// Setup logging:
+	switch arguments["-v"].(string) {
+	case "info":
+		loglevel = logging.INFO
+	case "debug":
+		loglevel = logging.DEBUG
+	default:
+		fmt.Fprintln(os.Stderr, "unknown log level")
+		exitCode = 1
+		return
 	}
+	logfile, err := openLogfile(arguments["-f"].(string))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exitCode = 1
+		return
+	}
+	defer closeLogfile(logfile)
+	setupLogger(loglevel, logfile, logFormat)
+
+	// Load config:
 	if arguments["-u"] != nil {
-		property := arguments["-u"].(string)
-		host := arguments["--host"].(string)
-		if arguments["--user"] != nil {
-			user = arguments["--user"].(string)
+		maxio, err := strconv.Atoi(arguments["--iothreads"].(string))
+		if err != nil {
+			log.Error("%s", err.Error())
+			exitCode = 1
+			return
 		}
-		if arguments["--key"] != nil {
-			key = arguments["--key"].(string)
-		}
-		if arguments["--iothreads"] != nil {
-			iothreads, _ = strconv.Atoi(arguments["--iothreads"].(string))
-		}
-		if arguments["--remote"] != nil {
-			remote = arguments["--remote"].(string)
-		}
-		if arguments["--expire"] != nil {
-			expire = arguments["--expire"].(string)
-		}
-		c = Config{
-			Host:         host,
-			User:         user,
-			Key:          key,
-			MaxIoThreads: iothreads,
-		}
-		err = loadConfigFromArgs(&c, property, remote, expire)
-	} else {
-		if arguments["-c"] != nil {
-			conffile = arguments["-c"].(string)
-		}
-		err = loadConfigFromFile(&c, conffile)
+		config, err = loadConfigFromArgs(
+			arguments["-u"].(string),
+			arguments["--remote"].(string),
+			arguments["--expire"].(string),
+			arguments["--host"].(string),
+			arguments["--user"].(string),
+			arguments["--key"].(string),
+			maxio,
+		)
+	}
+	if arguments["-c"] != nil {
+		config, err = loadConfigFromFile(arguments["-c"].(string))
 	}
 	if err != nil {
 		log.Error("error loading config:  %s", err.Error())
@@ -118,9 +110,9 @@ func main() {
 		log.Info("config ok")
 		return
 	}
-	logging.SetLevel(loglevel, log.Module)
 
-	backuper, err := NewBackuper(&c)
+	// Setup backup tasks:
+	backuper, err := NewBackuper(config)
 	if err != nil {
 		log.Error(err.Error())
 		exitCode = 1
@@ -132,20 +124,19 @@ func main() {
 		return
 	}
 
-	if arguments["--dry-run"].(bool) {
-		log.Info("--dry-run set, only show backup tasks:")
-		for _, b := range backupTasks {
-			log.Info("%s -> %s %s", b.src, backuper.c.Host, b.dst)
-		}
-	} else {
-		wg := sync.WaitGroup{}
-		mt := make(chan struct{}, c.MaxIoThreads)
-		for i, _ := range backupTasks {
+	wg := sync.WaitGroup{}
+	mt := make(chan struct{}, config.MaxIoThreads)
+
+	// Perform backup or dry-run:
+	for i, task := range backupTasks {
+		if arguments["--dry-run"].(bool) {
+			log.Info("%s -> %s %s", task.src, backuper.config.Host, task.dst)
+		} else {
 			wg.Add(1)
 			mt <- struct{}{}
 			go func(i int) {
 				log.Info("[%d]: starting backup", i)
-				if err := backupTasks[i].doBackup(); err != nil {
+				if err := task.doBackup(); err != nil {
 					log.Error("[%d]: %s", i, err.Error())
 					exitCode = 1
 				} else {

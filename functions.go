@@ -2,63 +2,35 @@ package main
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"os"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/theairkit/runcmd"
 	"github.com/theairkit/zfs"
 )
 
-type Backup struct {
-	Recursive    bool   `toml:"recursive"`
-	Expire       string `toml:"expire_hours"`
-	Local        string `toml:"local"`
-	RemoteRoot   string `toml:"remote_root"`
-	RemotePrefix string `toml:"remote_prefix"`
-}
-
-type Config struct {
-	Host         string   `toml:"host"`
-	User         string   `toml:"user"`
-	Key          string   `toml:"key"`
-	MaxIoThreads int      `toml:"max_io_threads"`
-	Backup       []Backup `toml:"backup"`
-}
-
 type Backuper struct {
-	lRunner *zfs.Zfs
-	rRunner *zfs.Zfs
-	c       *Config
+	srcZfs *zfs.Zfs
+	dstZfs *zfs.Zfs
+	config *Config
 }
 
 type BackupTask struct {
-	id      int
-	src     string
-	dst     string
-	expire  string
-	lRunner *zfs.Zfs
-	rRunner *zfs.Zfs
+	id     int
+	src    string
+	dst    string
+	expire string
+	srcZfs *zfs.Zfs
+	dstZfs *zfs.Zfs
 }
 
 var (
-	errUser       = errors.New("user not declared")
-	errHost       = errors.New("host not declared")
-	errKey        = errors.New("key not declared")
-	errBackup     = errors.New("[[backup]]: section not declared")
-	errFsLocal    = errors.New("[[backup]]: local not declared")
-	errFsRemote   = errors.New("[[backup]]: remote_root not declared")
 	errPrefix     = "'remote_prefix' and 'recursive' are mutually exclusive; skip this [[backup]] section"
 	errPrefixMask = "'remote_prefix' and 'regexp' are mutually exclusive; skip this [[backup]] section"
 	errRegex      = "'regexp' and 'recursive=true' are mutually exclusive; skip this [[backup]] section"
 	warnPrefixFs  = "'remote_prefix' set; fs with this name on remote may be overwritten"
 	warnExpire    = "expire_hours not set, will not delete old backups"
-	warnIoThread  = "max_io_threads not set, or set to '0', setting it to '1'"
 	snapExist     = "already exists, wait next minute and run again"
 	timeFormat    = "2006-01-02T15:04"
 	snapCurr      = "zbackup_curr"
@@ -67,123 +39,67 @@ var (
 	PROPERTY      = "zbackup:"
 )
 
-func loadConfigFromFile(c *Config, path string) error {
-	if _, err := os.Stat(path); err != nil {
-		return err
-	}
-	if _, err := toml.DecodeFile(path, c); err != nil {
-		return err
-	}
-	switch {
-	case c.User == "":
-		return errUser
-	case c.Host == "":
-		return errHost
-	case c.Key == "":
-		return errKey
-	case len(c.Backup) < 1:
-		return errBackup
-	case c.MaxIoThreads == 0:
-		log.Warning(warnIoThread)
-		c.MaxIoThreads = 1
-	}
-	for i := range c.Backup {
-		switch {
-		case c.Backup[i].Local == "":
-			return errFsLocal
-		case c.Backup[i].RemoteRoot == "":
-			return errFsRemote
-		case c.Backup[i].RemotePrefix != "":
-			log.Warning(warnPrefixFs)
-		}
-	}
-	return nil
-}
-
-func loadConfigFromArgs(c *Config, property, remote, expire string) error {
-	c.Backup = make([]Backup, 0)
-	lRunner, err := zfs.NewZfs(runcmd.NewLocalRunner())
-	if err != nil {
-		return err
-	}
-	list, err := lRunner.List("", zfs.FS, true)
-	if err != nil {
-		return err
-	}
-	for _, fs := range list {
-		out, err := lRunner.Property(fs, property)
-		if err != nil {
-			return err
-		}
-		if out == "true" {
-			c.Backup = append(c.Backup, Backup{false, expire, fs, remote, ""})
-		}
-	}
-	return nil
-}
-
 func NewBackuper(c *Config) (*Backuper, error) {
-	lRunner, err := zfs.NewZfs(runcmd.NewLocalRunner())
+	srcZfs, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return nil, err
 	}
-	rRunner, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
+	dstZfs, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
 	if err != nil {
 		return nil, err
 	}
-	return &Backuper{lRunner, rRunner, c}, nil
+	return &Backuper{srcZfs, dstZfs, c}, nil
 }
 
-func (this *Backuper) setupTasks() []BackupTask {
-	var bt []BackupTask
+func (backuper *Backuper) setupTasks() []BackupTask {
+	var tasks []BackupTask
 	var list []string
 	taskid := 0
-	c := this.c.Backup
+	config := backuper.config.Backup
 
-	for i := range c {
-		if c[i].RemotePrefix != "" && c[i].Recursive {
-			log.Error("%s: %s", c[i].Local, errPrefix)
+	for _, backup := range config {
+		if backup.RemotePrefix != "" && backup.Recursive {
+			log.Error("%s: %s", backup.Local, errPrefix)
 			continue
 		}
-		if c[i].Recursive && strings.HasSuffix(c[i].Local, "*") {
-			log.Error("%s: %s", c[i].Local, errRegex)
+		if backup.Recursive && strings.HasSuffix(backup.Local, "*") {
+			log.Error("%s: %s", backup.Local, errRegex)
 			continue
 		}
 
-		list, err = this.lRunner.List(c[i].Local, zfs.FS, c[i].Recursive)
+		list, err = backuper.srcZfs.List(backup.Local, zfs.FS, backup.Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
 		for _, src := range list {
-
-			dst := c[i].RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
-			if c[i].RemotePrefix != "" {
-				dst = c[i].RemoteRoot + "/" + c[i].RemotePrefix
+			dst := backup.RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
+			if backup.RemotePrefix != "" {
+				dst = backup.RemoteRoot + "/" + backup.RemotePrefix
 			}
-			bt = append(bt, BackupTask{
+			tasks = append(tasks, BackupTask{
 				taskid,
 				src,
 				dst,
-				c[i].Expire,
-				this.lRunner,
-				this.rRunner,
+				backup.Expire,
+				backuper.srcZfs,
+				backuper.dstZfs,
 			})
 			taskid++
 		}
 	}
-	return bt
+	return tasks
 }
 
-func (this *BackupTask) doBackup() error {
+func (task *BackupTask) doBackup() error {
 	snapPostfix := time.Now().Format(timeFormat)
-	id := this.id
-	src := this.src
-	dst := this.dst
+	id := task.id
+	src := task.src
+	dst := task.dst
 
-	// Snapshot already exists, wait minute and try ti run again:
+	// Check if snapshot with timestamp-based name already exists:
 	log.Debug("[%d]: check %s exists", id, dst+"@"+snapPostfix)
-	if exist, err := this.rRunner.ExistSnap(dst, snapPostfix); err != nil || exist {
+	if exist, err := task.dstZfs.ExistSnap(dst, snapPostfix); err != nil || exist {
 		if err != nil {
 			return err
 		}
@@ -191,8 +107,10 @@ func (this *BackupTask) doBackup() error {
 	}
 
 	// Check, if backup for the first time or not:
+	// @zbackup_curr not exist: create it and send
+	// @zbackup_curr exist: create @zbackup_new, and send delta between them
 	log.Debug("[%d]: check %s exists", id, src+"@"+snapCurr)
-	if exist, err := this.lRunner.ExistSnap(src, snapCurr); err != nil || !exist {
+	if exist, err := task.srcZfs.ExistSnap(src, snapCurr); err != nil || !exist {
 		if err != nil {
 			return err
 		}
@@ -200,19 +118,19 @@ func (this *BackupTask) doBackup() error {
 	}
 
 	// Backup:
-	if err := this.backupHelper(snapNew); err != nil {
+	if err := task.backupHelper(snapNew); err != nil {
 		return err
 	}
 
 	// Cleanup:
-	return this.cleanExpired()
+	return task.cleanExpired()
 }
 
-func (this *BackupTask) backupHelper(snapNew string) error {
+func (task *BackupTask) backupHelper(snapNew string) error {
 	snapPostfix := time.Now().Format(timeFormat)
-	id := this.id
-	src := this.src
-	dst := this.dst
+	id := task.id
+	src := task.src
+	dst := task.dst
 
 	snap := snapCurr
 	if snapNew != "" {
@@ -220,29 +138,23 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 	}
 
 	log.Debug("[%d]: create snapshot: %s...", id, snap)
-	if err := this.lRunner.CreateSnap(src, snap); err != nil {
+	if err := task.srcZfs.CreateSnap(src, snap); err != nil {
 		return err
 	}
 
 	log.Debug("[%d]: start recieve snapshot on remote...", id)
-	cmdRecv, err := this.rRunner.RecvSnap(dst, snapPostfix)
+	cmdRecv, err := task.dstZfs.RecvSnap(dst, snapPostfix)
 	if err != nil {
 		return err
 	}
 
-	log.Debug("[%d]: copy snapshot from local to remote...", this.id)
-	cmdSend, err := this.lRunner.SendSnap(src, snapCurr, snapNew, cmdRecv)
+	log.Debug("[%d]: copy snapshot from local to remote...", id)
+	cmdSend, err := task.srcZfs.SendSnap(src, snapCurr, snapNew, cmdRecv)
 	if err != nil {
 		return err
 	}
 
-	// In this case EOF is not error: http://golang.org/pkg/io/
-	// EOF is the error returned by Read when no more input is available.
-	// Functions should return EOF only to signal a graceful end of input.
 	if err := cmdSend.Wait(); err != nil {
-		return err
-	}
-	if err := cmdRecv.StdinPipe().Close(); err != nil && err != io.EOF {
 		return err
 	}
 	if err := cmdRecv.Wait(); err != nil {
@@ -251,27 +163,27 @@ func (this *BackupTask) backupHelper(snapNew string) error {
 
 	if snapNew != "" {
 		log.Debug("[%d]: rotate snapshots (destroy @curr, move @new to @curr)...", id)
-		if err := this.lRunner.Destroy(src + "@" + snapCurr); err != nil {
+		if err := task.srcZfs.Destroy(src + "@" + snapCurr); err != nil {
 			return err
 		}
-		if err := this.lRunner.RenameSnap(src, snapNew, snapCurr); err != nil {
+		if err := task.srcZfs.RenameSnap(src, snapNew, snapCurr); err != nil {
 			return err
 		}
 	}
 
-	log.Debug("[%d]: set remote %s 'readonly'...", this.id, dst)
-	if err := this.rRunner.SetProperty(dst, "readonly", "on"); err != nil {
+	log.Debug("[%d]: set remote %s 'readonly'...", id, dst)
+	if err := task.dstZfs.SetProperty(dst, "readonly", "on"); err != nil {
 		return err
 	}
 
-	log.Debug("[%d]: set remote %s 'zbackup:=true'...", this.id, dst+snapPostfix)
-	return this.rRunner.SetProperty(dst+"@"+snapPostfix, PROPERTY, "true")
+	log.Debug("[%d]: set remote %s 'zbackup:=true'...", id, dst+snapPostfix)
+	return task.dstZfs.SetProperty(dst+"@"+snapPostfix, PROPERTY, "true")
 }
 
-func (this *BackupTask) cleanExpired() error {
-	id := this.id
-	dst := this.dst
-	expire := this.expire
+func (task *BackupTask) cleanExpired() error {
+	id := task.id
+	dst := task.dst
+	expire := task.expire
 
 	log.Debug("[%d]: cleaning expired snapshots, expire: %s", id, expire)
 	if expire == "" {
@@ -279,13 +191,13 @@ func (this *BackupTask) cleanExpired() error {
 		return nil
 	}
 
-	recent, err := this.rRunner.RecentSnap(dst, PROPERTY)
+	recent, err := task.dstZfs.RecentSnap(dst, PROPERTY)
 	if err != nil {
 		return err
 	}
 
 	log.Debug("[%d]: get list remote snapshots...", id)
-	list, err := this.rRunner.ListFsSnap(dst)
+	list, err := task.dstZfs.ListFsSnap(dst)
 	if err != nil {
 		return err
 	}
@@ -294,18 +206,18 @@ func (this *BackupTask) cleanExpired() error {
 		return nil
 	}
 	for _, snap := range list {
-		out, err := this.rRunner.Property(snap, "zbackup:")
+		out, err := task.dstZfs.Property(snap, "zbackup:")
 		if err != nil {
 			return err
 		}
 		if out != "true" {
-			log.Debug("[%d]: %s is not created by zbackup, skipping", this.id, snap)
+			log.Debug("[%d]: %s is not created by zbackup, skipping", id, snap)
 			continue
 		}
-		if this.expire == "lastone" {
+		if task.expire == "lastone" {
 			if snap != recent {
 				log.Debug("[%d]: %s will be destroy (not recent)", id, snap)
-				if err := this.rRunner.Destroy(snap); err != nil {
+				if err := task.dstZfs.Destroy(snap); err != nil {
 					log.Error("[%d]: error destroying %s: %s", id, snap, err.Error())
 				}
 			}
@@ -321,7 +233,7 @@ func (this *BackupTask) cleanExpired() error {
 		if time.Since(poolDate) > expire {
 			log.Debug("[%d]: %s will be destroy (>%s)", id, snap, expire)
 
-			if err := this.rRunner.Destroy(snap); err != nil {
+			if err := task.dstZfs.Destroy(snap); err != nil {
 				log.Error("[%d]: error destroying %s: %s", id, snap, err.Error())
 				continue
 			}
@@ -330,40 +242,4 @@ func (this *BackupTask) cleanExpired() error {
 		}
 	}
 	return nil
-}
-
-func createPid() {
-	if arguments["-f"] != nil {
-		logfile, err = os.OpenFile(
-			arguments["-f"].(string),
-			os.O_RDWR|os.O_APPEND|os.O_CREATE,
-			0644,
-		)
-		if err != nil {
-			fmt.Fprintln(
-				os.Stderr,
-				arguments["-f"].(string)+": "+err.Error(),
-			)
-			os.Exit(1)
-		}
-	}
-
-	if _, err = os.Stat(pidfile); err == nil {
-		log.Error("%s already exists", pidfile)
-		os.Exit(1)
-	}
-	pid, err := os.Create(pidfile)
-	if err != nil {
-		log.Error("cannot create %s: %s", pidfile, err.Error())
-		os.Exit(1)
-	}
-	pid.WriteString(strconv.Itoa(syscall.Getpid()))
-}
-
-func deletePid() {
-	if err = os.Remove(pidfile); err != nil {
-		log.Error(err.Error())
-		exitCode = 1
-	}
-	os.Exit(exitCode)
 }
