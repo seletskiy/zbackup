@@ -22,21 +22,21 @@ Usage:
     --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours]
 
 Options:
-	-h              this help
-	--version       show version and exit
-	-c config       configuration-based backup [default: /etc/zbackup/zbackup.conf]
-	-t              test configuration and exit
-	--dry-run       show fs will be backup and exit
-	-p pidfile      set pidfile [default: /var/run/zbackup.pid]
-	-v loglevel     set loglevel: info, debug [default: info]
-	-f logfile      set logfile [default: stderr]
-	-u zfsproperty  property-based backup
-	--host host     set backup host ${hostname}:${port}
-	--user user     set backup user [default: root]
-	--key key       set keyfile [default: /root/.ssh/id_rsa]
-	--iothreads num set max parallel tasks [default: 5]
-	--remote fs     set remote root fs [default: 'zroot']
-	--expire hours  set expire time in hours or 'lastone' [default: 24h]`
+	-h               this help
+	--version        show version and exit
+	-c config        configuration-based backup [default: /etc/zbackup/zbackup.conf]
+	-t               test configuration and exit
+	--dry-run        show fs will be backup and exit
+	-p pidfile       set pidfile [default: /var/run/zbackup.pid]
+	-v loglevel      set loglevel: info, debug [default: info]
+	-f logfile       set logfile [default: stderr]
+	-u zfsproperty   property-based backup
+	--host host      set backup host ${hostname}:${port}
+	--user user      set backup user [default: root]
+	--key key        set keyfile [default: /root/.ssh/id_rsa]
+	--iothreads num  set max parallel tasks [default: 1]
+	--remote fs      set remote root fs [default: 'zroot']
+	--expire hours   set expire time in hours or 'lastone' [default: 24h]`
 
 	err       error
 	config    *Config
@@ -81,6 +81,7 @@ func main() {
 	setupLogger(loglevel, logfile, logFormat)
 
 	// Load config:
+	// property-based:
 	if arguments["-u"] != nil {
 		maxio, err := strconv.Atoi(arguments["--iothreads"].(string))
 		if err != nil {
@@ -97,8 +98,7 @@ func main() {
 			arguments["--key"].(string),
 			maxio,
 		)
-	}
-	if arguments["-c"] != nil {
+	} else { // configuration based, arguments["-c"] != nil
 		config, err = loadConfigFromFile(arguments["-c"].(string))
 	}
 	if err != nil {
@@ -124,28 +124,32 @@ func main() {
 		return
 	}
 
+	// Perform backup or dry-run:
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, config.MaxIoThreads)
-
-	// Perform backup or dry-run:
-	for i, task := range backupTasks {
+	for i, _ := range backupTasks {
 		if arguments["--dry-run"].(bool) {
-			log.Info("%s -> %s %s", task.src, backuper.config.Host, task.dst)
-		} else {
-			wg.Add(1)
-			mt <- struct{}{}
-			go func(i int) {
-				log.Info("[%d]: starting backup", i)
-				if err := task.doBackup(); err != nil {
-					log.Error("[%d]: %s", i, err.Error())
-					exitCode = 1
-				} else {
-					log.Info("[%d]: backup done", i)
-				}
-				<-mt
-				wg.Done()
-			}(i)
+			log.Info("[%d]: %s -> %s %s",
+				i,
+				backupTasks[i].src,
+				backuper.config.Host,
+				backupTasks[i].dst,
+			)
+			continue
 		}
-		wg.Wait()
+		wg.Add(1)
+		mt <- struct{}{}
+		go func(id int) {
+			log.Info("[%d]: starting backup", id)
+			if err := backupTasks[id].doBackup(); err != nil {
+				log.Error("[%d]: %s", id, err.Error())
+				exitCode = 1
+			} else {
+				log.Info("[%d]: backup done", id)
+			}
+			<-mt
+			wg.Done()
+		}(i)
 	}
+	wg.Wait()
 }

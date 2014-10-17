@@ -35,8 +35,8 @@ var (
 	timeFormat    = "2006-01-02T15:04"
 	snapCurr      = "zbackup_curr"
 	snapNew       = "zbackup_new"
-	h, _          = os.Hostname()
 	PROPERTY      = "zbackup:"
+	h, _          = os.Hostname()
 )
 
 func NewBackuper(c *Config) (*Backuper, error) {
