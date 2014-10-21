@@ -1,3 +1,4 @@
+# Maintainer: theairkit <theairkit@gmail.com>
 pkgname=zbackup-git
 pkgver=1.4.5
 pkgrel=1
