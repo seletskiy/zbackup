@@ -1,6 +1,8 @@
-#####Now only dev version available: not recommended use it for production backups!
+#####Use zbackup only for zfs versions, where next bugs are closed:
+https://github.com/zfsonlinux/zfs/issues/2652
+https://github.com/zfsonlinux/zfs/pull/2656
 
-### zbackup
+###zbackup
 
 zbackup is a multithreading zfs backuping (via snapshots) tool
 
@@ -45,8 +47,8 @@ zbackup -u zbackup: --host 192.186.20.80 --user root --key /root/.ssh/id_rsa
 ```
 
 #####configuration-file mode:
-in this mode zbackup performs backup filsystem, described in
-config file ('-c' key)
+in this mode zbackup performs backup filsystem, described
+in config file ('-c' key)
 
 configuration file have a TOML format and very simple:
 ```bash
@@ -90,27 +92,30 @@ zbackup -c /etc/zbackup/zbackup.conf -v debug
 
 All command keys (some of them has a default values):
 ```bash
- zbackup -h
+zbackup -h
 Usage:
-  zbackup
-  zbackup [-h] [-t] [-p pidfile] [-v loglevel] [-f logfile] [--dry-run]
-          [(-c configfile | -u zfsproperty --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours])]
+  zbackup -h
+  zbackup --version
+  zbackup [-c config]    [-t] [--dry-run] [-p pidfile] [-v loglevel] [-f logfile]
+  zbackup -u zfsproperty [-t] [--dry-run] [-p pidfile] [-v loglevel] [-f logfile]
+  --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours]
 
 Options:
-  -h              this help
-  -t              test configuration and exit
-  -p pidfile      set pidfile (default: /var/run/zbackup.pid)
-  -v loglevel     set loglevel: info, debug (default: info)
-  -f logfile      set logfile (default: stderr)
-  --dry-run       show which fs will backup and exit
-  -c configfile   config-based backup (default: /etc/zbackup/zbackup.conf)
-  -u zfsproperty  property-based backup (backing up all fs with zfsproperty)
-  --host host     set backup host: ${hostname}:${port}
-  --user user     set backup user: (default: root)
-  --key key       set keyfile: (default: /root/.ssh/id_rsa)
-  --iothreads num set max parallel tasks (default: 5)
-  --remote fs     set remote fs (default: 'zroot')
-  --expire hours  set snapshot expire time in hours: '${n}h' (default: 24h)
+  -h               this help
+  --version        show version and exit
+  -c config        configuration-based backup [default: /etc/zbackup/zbackup.conf]
+  -t               test configuration and exit
+  --dry-run        show fs will be backup and exit
+  -p pidfile       set pidfile [default: /var/run/zbackup.pid]
+  -v loglevel      set loglevel: info, debug [default: info]
+  -f logfile       set logfile [default: stderr]
+  -u zfsproperty   property-based backup
+  --host host      set backup host ${hostname}:${port}
+  --user user      set backup user [default: root]
+  --key key        set keyfile [default: /root/.ssh/id_rsa]
+  --iothreads num  set max parallel tasks [default: 1]
+  --remote fs      set remote root fs [default: 'zroot']
+  --expire hours   set expire time in hours or 'lastone' [default: 24h]
 ```
 
 ####Some internals
