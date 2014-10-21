@@ -19,7 +19,7 @@ Usage:
 	zbackup --version
 	zbackup [-c config]    [-t] [--dry-run] [-p pidfile] [-v loglevel] [-f logfile]
 	zbackup -u zfsproperty [-t] [--dry-run] [-p pidfile] [-v loglevel] [-f logfile]
-    --host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours]
+	--host host [--user user] [--key key] [--iothreads num] [--remote fs] [--expire hours]
 
 Options:
 	-h               this help
