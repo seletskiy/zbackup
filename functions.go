@@ -17,12 +17,13 @@ type Backuper struct {
 }
 
 type BackupTask struct {
-	id     int
-	src    string
-	dst    string
-	expire string
-	srcZfs *zfs.Zfs
-	dstZfs *zfs.Zfs
+	id      int
+	src     string
+	dst     string
+	dstroot string
+	expire  string
+	srcZfs  *zfs.Zfs
+	dstZfs  *zfs.Zfs
 }
 
 var (
@@ -80,6 +81,7 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 				taskid,
 				src,
 				dst,
+				backup.RemoteRoot,
 				backup.Expire,
 				backuper.srcZfs,
 				backuper.dstZfs,
@@ -139,6 +141,15 @@ func (task *BackupTask) backupHelper(snapNew string) error {
 	log.Debug("[%d]: create snapshot: %s...", id, snap)
 	if err := task.srcZfs.CreateSnap(src, snap); err != nil {
 		return err
+	}
+
+	log.Debug("[%d]: check, if %s exists...", id, task.dstroot)
+	exist, err := task.dstZfs.ExistFs(task.dstroot)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		task.dstZfs.CreateFs(task.dstroot)
 	}
 
 	log.Debug("[%d]: start recieve snapshot on remote...", id)
