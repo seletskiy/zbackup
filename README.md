@@ -72,6 +72,9 @@ remote_root    = "zroot"
 ...
 [[backup]]
 ```
+In remote_root you can specify:
+- zfs pool name;
+- zfs fs name: if not exists, zbackup will try to create it;
 
 after creating configuration file, check config, start dry-run,
 and then perform zbackup:
