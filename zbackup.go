@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/docopt/docopt-go"
@@ -38,12 +39,13 @@ Options:
 	--remote fs      set remote root fs [default: 'zroot']
 	--expire hours   set expire time in hours or 'lastone' [default: 24h]`
 
-	err       error
-	config    *Config
-	loglevel  logging.Level
-	log       = logging.MustGetLogger("zbackup")
-	logFormat = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
-	warnEmpty = "no backup tasks"
+	err        error
+	config     *Config
+	configName string
+	loglevel   logging.Level
+	log        = logging.MustGetLogger("zbackup")
+	logFormat  = "%{time:15:04:05.000000} %{pid} %{level:.8s} %{message}"
+	warnEmpty  = "no backup tasks"
 
 	exitCode = 0
 )
@@ -99,6 +101,14 @@ func main() {
 			maxio,
 		)
 	} else { // configuration based, arguments["-c"] != nil
+		configTokens := strings.Split(arguments["-c"].(string), "/")
+		if len(configTokens) > 0 {
+			configName = configTokens[len(configTokens)-1]
+		} else {
+			log.Error("unknown config file")
+			exitCode = 1
+			return
+		}
 		config, err = loadConfigFromFile(arguments["-c"].(string))
 	}
 	if err != nil {
@@ -112,7 +122,7 @@ func main() {
 	}
 
 	// Setup backup tasks:
-	backuper, err := NewBackuper(config)
+	backuper, err := NewBackuper(config, configName)
 	if err != nil {
 		log.Error(err.Error())
 		exitCode = 1

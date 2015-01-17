@@ -11,19 +11,21 @@ import (
 )
 
 type Backuper struct {
-	srcZfs *zfs.Zfs
-	dstZfs *zfs.Zfs
-	config *Config
+	srcZfs   *zfs.Zfs
+	dstZfs   *zfs.Zfs
+	config   *Config
+	snapSuff string
 }
 
 type BackupTask struct {
-	id      int
-	src     string
-	dst     string
-	dstroot string
-	expire  string
-	srcZfs  *zfs.Zfs
-	dstZfs  *zfs.Zfs
+	id       int
+	src      string
+	dst      string
+	dstroot  string
+	expire   string
+	srcZfs   *zfs.Zfs
+	dstZfs   *zfs.Zfs
+	snapSuff string
 }
 
 var (
@@ -34,13 +36,13 @@ var (
 	warnExpire    = "expire_hours not set, will not delete old backups"
 	snapExist     = "already exists, wait next minute and run again"
 	timeFormat    = "2006-01-02T15:04"
-	snapCurr      = "zbackup_curr"
-	snapNew       = "zbackup_new"
+	snapCurr      = "zbackup_curr_"
+	snapNew       = "zbackup_new_"
 	PROPERTY      = "zbackup:"
 	h, _          = os.Hostname()
 )
 
-func NewBackuper(c *Config) (*Backuper, error) {
+func NewBackuper(c *Config, snapSuff string) (*Backuper, error) {
 	srcZfs, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return nil, err
@@ -49,7 +51,7 @@ func NewBackuper(c *Config) (*Backuper, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backuper{srcZfs, dstZfs, c}, nil
+	return &Backuper{srcZfs, dstZfs, c, snapSuff}, nil
 }
 
 func (backuper *Backuper) setupTasks() []BackupTask {
@@ -85,6 +87,7 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 				backup.Expire,
 				backuper.srcZfs,
 				backuper.dstZfs,
+				backuper.snapSuff,
 			})
 			taskid++
 		}
@@ -97,6 +100,8 @@ func (task *BackupTask) doBackup() error {
 	id := task.id
 	src := task.src
 	dst := task.dst
+	snapCurr += task.snapSuff
+	snapNew += task.snapSuff
 
 	// Check if snapshot with timestamp-based name already exists:
 	log.Debug("[%d]: check %s exists", id, dst+"@"+snapPostfix)
