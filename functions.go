@@ -65,7 +65,6 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 			log.Error("%s: %s", backup.Local, errRegex)
 			continue
 		}
-
 		fsList, err := backuper.srcZfs.List(backup.Local, zfs.FS, backup.Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())

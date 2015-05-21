@@ -32,6 +32,7 @@ type Config struct {
 }
 
 type Backup struct {
+	OnlyLocal    bool   `toml:"onlylocal"`
 	Recursive    bool   `toml:"recursive"`
 	Expire       string `toml:"expire_hours"`
 	Local        string `toml:"local"`
@@ -155,7 +156,7 @@ func loadConfigFromArgs(
 		if out == "true" {
 			config.Backup = append(
 				config.Backup,
-				Backup{false, expire, fs, remote, ""},
+				Backup{false, false, expire, fs, remote, ""},
 			)
 		}
 	}
