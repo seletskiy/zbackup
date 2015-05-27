@@ -16,7 +16,7 @@ var (
 	errRegex      = "'regexp' and 'recursive=true' are mutually exclusive; skip this [[backup]] section"
 	warnPrefixFs  = "'remote_prefix' set; fs with this name on remote may be overwritten"
 	warnExpire    = "expire_hours not set, will not delete old backups"
-	snapExist     = "already exists, wait next minute and run again"
+	waitExist     = "already exists, wait next minute and run again"
 	timeFormat    = "2006-01-02T15:04"
 	snapCurr      = "zbackup_curr"
 	snapNew       = "zbackup_new"
@@ -60,7 +60,7 @@ func NewBackuper(c *Config) (*Backuper, error) {
 		return nil, err
 	}
 
-	return &Backuper{src, dst, c}, nil
+	return &Backuper{c, src, dst}, nil
 }
 
 func (backuper *Backuper) setupTasks() []BackupTask {
@@ -69,31 +69,32 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 	config := backuper.config.Backup
 
 	for _, backup := range config {
-		var dstZfs *zfs.Zfs
+		var dst *zfs.Zfs
 
 		if backup.RemotePrefix != "" && backup.Recursive {
-			log.Error("%s: %s", backup.LocalFs, errPrefix)
+			log.Error("%s: %s", backup.Fs, errPrefix)
 			continue
 		}
-		if backup.Recursive && strings.HasSuffix(backup.LocalFs, "*") {
-			log.Error("%s: %s", backup.LocalFs, errRegex)
+		if backup.Recursive && strings.HasSuffix(backup.Fs, "*") {
+			log.Error("%s: %s", backup.Fs, errRegex)
 			continue
 		}
-		fsList, err := backuper.srcZfs.List(backup.LocalFs, zfs.FS, backup.Recursive)
+		fsList, err := backuper.srcZfs.List(backup.Fs, zfs.FS, backup.Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
-		if backup.LocalMode != backuper.config.LocalMode {
+		if backup.LocalMode != nil {
 			if backup.LocalMode == true {
-				dstZfs = zfs.NewZfs(runcmd.NewLocalRunner())
+				dst = zfs.NewZfs(runcmd.NewLocalRunner())
 			} else {
+				dst = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner())
 			}
 		}
 		for _, fs := range fsList {
 			var dstFs string
 			if backuper.config.LocalMode == true {
-				dstFs = backup.RemoteRoot + "/" + h + "-" + strings.Replace(fs, "/", "-", -1)
+				dstFs = backup.RemoteRoot + "/" + hostname + "-" + strings.Replace(fs, "/", "-", -1)
 			} else {
 				dstFs = backup.RemoteRoot + "/" + strings.Replace(fs, "/", "-", -1)
 			}

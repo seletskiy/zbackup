@@ -23,24 +23,33 @@ var (
 	errNoBackup  = errors.New("[[backup]]: section not declared")
 	errNoFs      = errors.New("[[backup]]: fs not declared")
 	errNoDstPool = errors.New("[[backup]]: dst_pool not declared")
-	warnIoThread = errors.New("max_io_threads not set, or '0', set to '1'")
+	warnNoUser   = errors.New("'user' not declared, skip this [[backup]] section")
+	warnNoHost   = errors.New("'host' not declared, skip this [[backup]] section")
+	warnNoKey    = errors.New("'key' not declared, skip this [[backup]] section")
+	warnUser     = errors.New("'user' and localmode are mutually exclusive, skip this [[backup]] section")
+	warnHost     = errors.New("'host' and localmode are mutually exclusive, skip this [[backup]] section")
+	warnKey      = errors.New("'key' and localmode are mutually exclusive, skip this [[backup]] section")
+
+	warnThread = errors.New("'threads' less than 1, set to '1'")
 )
 
 type Config struct {
-	Host         string   `toml:"host"`
-	User         string   `toml:"user"`
-	Key          string   `toml:"key"`
-	MaxIoThreads int      `toml:"max_io_threads"`
-	LocalMode    bool     `toml:"localmode"`
-	Backup       []Backup `toml:"backup"`
+	Host      string   `toml:"host"`
+	User      string   `toml:"user"`
+	Key       string   `toml:"key"`
+	Threads   int      `toml:"threads"`
+	LocalMode bool     `toml:"localmode"`
+	Backup    []Backup `toml:"backup"`
 }
 
 type Backup struct {
-	OnlyLocal    bool   `toml:"onlylocal"`
+	Host         string `toml:"host"`
+	User         string `toml:"user"`
+	Key          string `toml:"key"`
 	Recursive    bool   `toml:"recursive"`
 	Expire       string `toml:"expire_hours"`
-	LocalFs      string `toml:"localfs"`
-	RemoteRoot   string `toml:"remote_root"`
+	Fs           string `toml:"fs"`
+	DstPool      string `toml:"dst_pool"`
 	RemotePrefix string `toml:"remote_prefix"`
 	LocalMode    *bool  `toml:"localmode"`
 }
@@ -126,18 +135,45 @@ func loadConfigFromFile(filename string) (*Config, error) {
 		}
 	}
 	if len(config.Backup) < 1 {
-		return nil, errBackup
+		return nil, errNoBackup
 	}
-	if config.MaxIoThreads == 0 {
-		log.Warning(warnIoThread.Error())
-		config.MaxIoThreads = 1
+	if config.Threads < 1 {
+		log.Warning(warnThread.Error())
+		config.Threads = 1
 	}
 	for i := range config.Backup {
+		if config.Backup[i].LocalMode != nil {
+			if *config.Backup[i].LocalMode == true {
+				switch {
+				case config.Backup[i].User == "":
+					log.Warning(warnNoUser.Error())
+					continue
+				case config.Backup[i].Host == "":
+					log.Warning(warnNoHost.Error())
+					continue
+				case config.Backup[i].Key == "":
+					log.Warning(warnNoKey.Error())
+					continue
+				}
+			} else {
+				switch {
+				case config.Backup[i].User != "":
+					log.Warning(warnUser.Error())
+					continue
+				case config.Backup[i].Host != "":
+					log.Warning(warnHost.Error())
+					continue
+				case config.Backup[i].Key != "":
+					log.Warning(warnKey.Error())
+					continue
+				}
+			}
+		}
 		switch {
-		case config.Backup[i].LocalFs == "":
-			return nil, errFsLocal
-		case config.Backup[i].RemoteRoot == "":
-			return nil, errFsRemote
+		case config.Backup[i].Fs == "":
+			return nil, errNoFs
+		case config.Backup[i].DstPool == "":
+			return nil, errNoDstPool
 		}
 	}
 	return &config, nil
@@ -157,7 +193,7 @@ func loadConfigFromArgs(
 	config.Host = host
 	config.User = user
 	config.Key = key
-	config.MaxIoThreads = maxio
+	config.Threads = maxio
 
 	srcZfs, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
@@ -175,7 +211,7 @@ func loadConfigFromArgs(
 		if out == "true" {
 			config.Backup = append(
 				config.Backup,
-				Backup{false, false, expire, fs, remote, "", false},
+				Backup{"", "", "", false, expire, fs, remote, "", nil},
 			)
 		}
 	}
