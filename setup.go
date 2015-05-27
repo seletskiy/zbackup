@@ -29,15 +29,17 @@ type Config struct {
 	Key          string   `toml:"key"`
 	MaxIoThreads int      `toml:"max_io_threads"`
 	Backup       []Backup `toml:"backup"`
+	LocalMode    bool     `toml:"localmode"`
 }
 
 type Backup struct {
 	OnlyLocal    bool   `toml:"onlylocal"`
 	Recursive    bool   `toml:"recursive"`
 	Expire       string `toml:"expire_hours"`
-	Local        string `toml:"local"`
+	LocalFs      string `toml:"localfs"`
 	RemoteRoot   string `toml:"remote_root"`
 	RemotePrefix string `toml:"remote_prefix"`
+	LocalMode    bool   `toml:"localmode"`
 }
 
 func createPidfile(filename string) error {
