@@ -10,21 +10,6 @@ import (
 	"github.com/theairkit/zfs"
 )
 
-type Backuper struct {
-	srcZfs *zfs.Zfs
-	dstZfs *zfs.Zfs
-	config *Config
-}
-
-type BackupTask struct {
-	id     int
-	src    string
-	dst    string
-	expire string
-	srcZfs *zfs.Zfs
-	dstZfs *zfs.Zfs
-}
-
 var (
 	errPrefix     = "'remote_prefix' and 'recursive' are mutually exclusive; skip this [[backup]] section"
 	errPrefixMask = "'remote_prefix' and 'regexp' are mutually exclusive; skip this [[backup]] section"
@@ -36,31 +21,46 @@ var (
 	snapCurr      = "zbackup_curr"
 	snapNew       = "zbackup_new"
 	PROPERTY      = "zbackup:"
-	h, _          = os.Hostname()
+	hostname, _   = os.Hostname()
 )
+
+type Backuper struct {
+	config *Config
+	srcZfs *zfs.Zfs
+	dstZfs *zfs.Zfs
+}
+
+type BackupTask struct {
+	id     int
+	src    string
+	dst    string
+	expire string
+	srcZfs *zfs.Zfs
+	dstZfs *zfs.Zfs
+}
 
 func NewBackuper(c *Config) (*Backuper, error) {
 	var (
-		srcZfs *zfs.Zfs
-		dstZfs *zfs.Zfs
-		err    error
+		src *zfs.Zfs
+		dst *zfs.Zfs
+		err error
 	)
 
-	srcZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
+	src, err = zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return nil, err
 	}
 
-	if c.LocalMode == false {
-		dstZfs, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
+	if c.LocalMode == true {
+		dst = src
 	} else {
-		dstZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
+		dst, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	return &Backuper{srcZfs, dstZfs, c}, nil
+	return &Backuper{src, dst, c}, nil
 }
 
 func (backuper *Backuper) setupTasks() []BackupTask {
@@ -69,7 +69,7 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 	config := backuper.config.Backup
 
 	for _, backup := range config {
-		dstZfs * zfs.Zfs
+		var dstZfs *zfs.Zfs
 
 		if backup.RemotePrefix != "" && backup.Recursive {
 			log.Error("%s: %s", backup.LocalFs, errPrefix)

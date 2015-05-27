@@ -14,12 +14,15 @@ import (
 )
 
 var (
-	errUser      = errors.New("user not declared")
-	errHost      = errors.New("host not declared")
-	errKey       = errors.New("key not declared")
-	errBackup    = errors.New("[[backup]]: section not declared")
-	errFsLocal   = errors.New("[[backup]]: local not declared")
-	errFsRemote  = errors.New("[[backup]]: remote_root not declared")
+	errNoUser    = errors.New("'user' not declared")
+	errNoHost    = errors.New("'host' not declared")
+	errNoKey     = errors.New("'key' not declared")
+	errUser      = errors.New("'user' and 'localmode' are mutually exclusive")
+	errHost      = errors.New("'host' and 'localmode' are mutually exclusive")
+	errKey       = errors.New("'key' and 'localmode' are mutually exclusive")
+	errNoBackup  = errors.New("[[backup]]: section not declared")
+	errNoFs      = errors.New("[[backup]]: fs not declared")
+	errNoDstPool = errors.New("[[backup]]: dst_pool not declared")
 	warnIoThread = errors.New("max_io_threads not set, or '0', set to '1'")
 )
 
@@ -39,7 +42,7 @@ type Backup struct {
 	LocalFs      string `toml:"localfs"`
 	RemoteRoot   string `toml:"remote_root"`
 	RemotePrefix string `toml:"remote_prefix"`
-	LocalMode    bool   `toml:"localmode"`
+	LocalMode    *bool  `toml:"localmode"`
 }
 
 func createPidfile(filename string) error {
@@ -102,16 +105,30 @@ func loadConfigFromFile(filename string) (*Config, error) {
 	if _, err := toml.DecodeFile(filename, &config); err != nil {
 		return nil, err
 	}
-	switch {
-	case config.User == "":
-		return nil, errUser
-	case config.Host == "":
-		return nil, errHost
-	case config.Key == "":
-		return nil, errKey
-	case len(config.Backup) < 1:
+
+	if config.LocalMode {
+		switch {
+		case config.User != "":
+			return nil, errUser
+		case config.Host != "":
+			return nil, errHost
+		case config.Key != "":
+			return nil, errKey
+		}
+	} else {
+		switch {
+		case config.User == "":
+			return nil, errNoUser
+		case config.Host == "":
+			return nil, errNoHost
+		case config.Key == "":
+			return nil, errNoKey
+		}
+	}
+	if len(config.Backup) < 1 {
 		return nil, errBackup
-	case config.MaxIoThreads == 0:
+	}
+	if config.MaxIoThreads == 0 {
 		log.Warning(warnIoThread.Error())
 		config.MaxIoThreads = 1
 	}
