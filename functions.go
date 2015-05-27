@@ -40,14 +40,26 @@ var (
 )
 
 func NewBackuper(c *Config) (*Backuper, error) {
-	srcZfs, err := zfs.NewZfs(runcmd.NewLocalRunner())
+	var (
+		srcZfs *zfs.Zfs
+		dstZfs *zfs.Zfs
+		err    error
+	)
+
+	srcZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return nil, err
 	}
-	dstZfs, err := zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
+
+	if c.LocalMode == false {
+		dstZfs, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
+	} else {
+		dstZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
+	}
 	if err != nil {
 		return nil, err
 	}
+
 	return &Backuper{srcZfs, dstZfs, c}, nil
 }
 
@@ -57,28 +69,41 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 	config := backuper.config.Backup
 
 	for _, backup := range config {
+		dstZfs * zfs.Zfs
+
 		if backup.RemotePrefix != "" && backup.Recursive {
-			log.Error("%s: %s", backup.Local, errPrefix)
+			log.Error("%s: %s", backup.LocalFs, errPrefix)
 			continue
 		}
-		if backup.Recursive && strings.HasSuffix(backup.Local, "*") {
-			log.Error("%s: %s", backup.Local, errRegex)
+		if backup.Recursive && strings.HasSuffix(backup.LocalFs, "*") {
+			log.Error("%s: %s", backup.LocalFs, errRegex)
 			continue
 		}
-		fsList, err := backuper.srcZfs.List(backup.Local, zfs.FS, backup.Recursive)
+		fsList, err := backuper.srcZfs.List(backup.LocalFs, zfs.FS, backup.Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
-		for _, src := range fsList {
-			dst := backup.RemoteRoot + "/" + h + "-" + strings.Replace(src, "/", "-", -1)
+		if backup.LocalMode != backuper.config.LocalMode {
+			if backup.LocalMode == true {
+				dstZfs = zfs.NewZfs(runcmd.NewLocalRunner())
+			} else {
+			}
+		}
+		for _, fs := range fsList {
+			var dstFs string
+			if backuper.config.LocalMode == true {
+				dstFs = backup.RemoteRoot + "/" + h + "-" + strings.Replace(fs, "/", "-", -1)
+			} else {
+				dstFs = backup.RemoteRoot + "/" + strings.Replace(fs, "/", "-", -1)
+			}
 			if backup.RemotePrefix != "" {
-				dst = backup.RemoteRoot + "/" + backup.RemotePrefix
+				dstFs = backup.RemoteRoot + "/" + backup.RemotePrefix
 			}
 			tasks = append(tasks, BackupTask{
 				taskid,
-				src,
-				dst,
+				srcFs,
+				dstFs,
 				backup.Expire,
 				backuper.srcZfs,
 				backuper.dstZfs,
@@ -122,6 +147,14 @@ func (task *BackupTask) doBackup() error {
 
 	// Cleanup:
 	return task.cleanExpired()
+}
+
+func (task *BackupTask) doLocalBackup() error {
+	return nil
+}
+
+func (task *BackupTask) doRemoteBackup() error {
+	return nil
 }
 
 func (task *BackupTask) backupHelper(snapNew string) error {

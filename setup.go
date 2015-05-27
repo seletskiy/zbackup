@@ -28,8 +28,8 @@ type Config struct {
 	User         string   `toml:"user"`
 	Key          string   `toml:"key"`
 	MaxIoThreads int      `toml:"max_io_threads"`
-	Backup       []Backup `toml:"backup"`
 	LocalMode    bool     `toml:"localmode"`
+	Backup       []Backup `toml:"backup"`
 }
 
 type Backup struct {
@@ -117,7 +117,7 @@ func loadConfigFromFile(filename string) (*Config, error) {
 	}
 	for i := range config.Backup {
 		switch {
-		case config.Backup[i].Local == "":
+		case config.Backup[i].LocalFs == "":
 			return nil, errFsLocal
 		case config.Backup[i].RemoteRoot == "":
 			return nil, errFsRemote
@@ -158,7 +158,7 @@ func loadConfigFromArgs(
 		if out == "true" {
 			config.Backup = append(
 				config.Backup,
-				Backup{false, false, expire, fs, remote, ""},
+				Backup{false, false, expire, fs, remote, "", false},
 			)
 		}
 	}
