@@ -186,14 +186,14 @@ func loadConfigFromArgs(
 	host,
 	user,
 	key string,
-	maxio int,
+	threads int,
 ) (*Config, error) {
 	config := new(Config)
 	config.Backup = make([]Backup, 0)
 	config.Host = host
 	config.User = user
 	config.Key = key
-	config.Threads = maxio
+	config.Threads = threads
 
 	srcZfs, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {

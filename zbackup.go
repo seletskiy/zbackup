@@ -126,7 +126,7 @@ func main() {
 
 	// Perform backup or dry-run:
 	wg := sync.WaitGroup{}
-	mt := make(chan struct{}, config.MaxIoThreads)
+	mt := make(chan struct{}, config.Threads)
 	for i, _ := range backupTasks {
 		if arguments["--dry-run"].(bool) {
 			log.Info("[%d]: %s -> %s %s",

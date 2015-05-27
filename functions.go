@@ -16,7 +16,7 @@ var (
 	errRegex      = "'regexp' and 'recursive=true' are mutually exclusive; skip this [[backup]] section"
 	warnPrefixFs  = "'remote_prefix' set; fs with this name on remote may be overwritten"
 	warnExpire    = "expire_hours not set, will not delete old backups"
-	waitExist     = "already exists, wait next minute and run again"
+	warnWaitExist = "already exists, wait next minute and run again"
 	timeFormat    = "2006-01-02T15:04"
 	snapCurr      = "zbackup_curr"
 	snapNew       = "zbackup_new"
@@ -69,7 +69,8 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 	config := backuper.config.Backup
 
 	for _, backup := range config {
-		var dst *zfs.Zfs
+		var dstZfs *zfs.Zfs
+		var err error
 
 		if backup.RemotePrefix != "" && backup.Recursive {
 			log.Error("%s: %s", backup.Fs, errPrefix)
@@ -84,22 +85,29 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
-		if backup.LocalMode != nil {
-			if backup.LocalMode == true {
-				dst = zfs.NewZfs(runcmd.NewLocalRunner())
+		if *backup.LocalMode == true {
+			if *backup.LocalMode == true {
+				dstZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
 			} else {
-				dst = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner())
+				dstZfs, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(
+					backup.Host,
+					backup.User,
+					backup.Key,
+				))
+			}
+			if err != nil {
+				return nil
 			}
 		}
-		for _, fs := range fsList {
+		for _, srcFs := range fsList {
 			var dstFs string
 			if backuper.config.LocalMode == true {
-				dstFs = backup.RemoteRoot + "/" + hostname + "-" + strings.Replace(fs, "/", "-", -1)
+				dstFs = backup.DstPool + "/" + hostname + "-" + strings.Replace(srcFs, "/", "-", -1)
 			} else {
-				dstFs = backup.RemoteRoot + "/" + strings.Replace(fs, "/", "-", -1)
+				dstFs = backup.DstPool + "/" + strings.Replace(srcFs, "/", "-", -1)
 			}
 			if backup.RemotePrefix != "" {
-				dstFs = backup.RemoteRoot + "/" + backup.RemotePrefix
+				dstFs = backup.DstPool + "/" + backup.RemotePrefix
 			}
 			tasks = append(tasks, BackupTask{
 				taskid,
@@ -107,7 +115,7 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 				dstFs,
 				backup.Expire,
 				backuper.srcZfs,
-				backuper.dstZfs,
+				dstZfs,
 			})
 			taskid++
 		}
@@ -127,7 +135,7 @@ func (task *BackupTask) doBackup() error {
 		if err != nil {
 			return err
 		}
-		return errors.New(dst + "@" + snapPostfix + " " + snapExist)
+		return errors.New(dst + "@" + snapPostfix + " " + warnWaitExist)
 	}
 
 	// Check, if backup for the first time or not:
