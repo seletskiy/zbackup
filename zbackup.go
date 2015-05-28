@@ -110,7 +110,6 @@ func main() {
 		log.Info("config ok")
 		return
 	}
-
 	// Setup backup tasks:
 	backuper, err := NewBackuper(config)
 	if err != nil {
@@ -118,12 +117,18 @@ func main() {
 		exitCode = 1
 		return
 	}
-	backupTasks := backuper.setupTasks()
+	fmt.Println("zbackup-blah1")
+	backupTasks, err := backuper.setupTasks()
+	if err != nil {
+		log.Error(err.Error())
+	}
+	fmt.Println("zbackup-blah2")
 	if len(backupTasks) == 0 {
+		fmt.Println("zbackup-blah3")
 		log.Warning(warnEmpty)
 		return
 	}
-
+	fmt.Println("zbackup-blah4")
 	// Perform backup or dry-run:
 	wg := sync.WaitGroup{}
 	mt := make(chan struct{}, config.Threads)

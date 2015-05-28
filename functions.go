@@ -25,12 +25,12 @@ var (
 )
 
 type Backuper struct {
-	config *Config
-	srcZfs *zfs.Zfs
-	dstZfs *zfs.Zfs
+	config   *Config
+	localZfs *zfs.Zfs
 }
 
 type BackupTask struct {
+	local  bool
 	id     int
 	src    string
 	dst    string
@@ -40,38 +40,23 @@ type BackupTask struct {
 }
 
 func NewBackuper(c *Config) (*Backuper, error) {
-	var (
-		src *zfs.Zfs
-		dst *zfs.Zfs
-		err error
-	)
-
-	src, err = zfs.NewZfs(runcmd.NewLocalRunner())
+	localZfs, err := zfs.NewZfs(runcmd.NewLocalRunner())
 	if err != nil {
 		return nil, err
 	}
-
-	if c.LocalMode == true {
-		dst = src
-	} else {
-		dst, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(c.User, c.Host, c.Key))
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &Backuper{c, src, dst}, nil
+	return &Backuper{c, localZfs}, nil
 }
 
-func (backuper *Backuper) setupTasks() []BackupTask {
+func (backuper *Backuper) setupTasks() ([]BackupTask, error) {
+	var localZfs *zfs.Zfs
+	var remoteZfs *zfs.Zfs
+	var err error
+
 	tasks := make([]BackupTask, 0)
 	taskid := 0
 	config := backuper.config.Backup
 
 	for _, backup := range config {
-		var dstZfs *zfs.Zfs
-		var err error
-
 		if backup.RemotePrefix != "" && backup.Recursive {
 			log.Error("%s: %s", backup.Fs, errPrefix)
 			continue
@@ -80,56 +65,62 @@ func (backuper *Backuper) setupTasks() []BackupTask {
 			log.Error("%s: %s", backup.Fs, errRegex)
 			continue
 		}
-		fsList, err := backuper.srcZfs.List(backup.Fs, zfs.FS, backup.Recursive)
+		if backup.LocalMode == nil {
+			*backup.LocalMode = backuper.config.LocalMode
+		}
+		if *backup.LocalMode == true {
+			remoteZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
+		} else {
+			remoteZfs, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(
+				backup.Host,
+				backup.User,
+				backup.Key,
+			))
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		fsList, err := backuper.localZfs.List(backup.Fs, zfs.FS, backup.Recursive)
 		if err != nil {
 			log.Error("error get filesystems: %s", err.Error())
 			continue
 		}
-		if *backup.LocalMode == true {
-			if *backup.LocalMode == true {
-				dstZfs, err = zfs.NewZfs(runcmd.NewLocalRunner())
-			} else {
-				dstZfs, err = zfs.NewZfs(runcmd.NewRemoteKeyAuthRunner(
-					backup.Host,
-					backup.User,
-					backup.Key,
-				))
-			}
-			if err != nil {
-				return nil
-			}
-		}
 		for _, srcFs := range fsList {
 			var dstFs string
+			var local bool
 			if backuper.config.LocalMode == true {
+				local = true
 				dstFs = backup.DstPool + "/" + hostname + "-" + strings.Replace(srcFs, "/", "-", -1)
 			} else {
+				local = false
 				dstFs = backup.DstPool + "/" + strings.Replace(srcFs, "/", "-", -1)
 			}
 			if backup.RemotePrefix != "" {
 				dstFs = backup.DstPool + "/" + backup.RemotePrefix
 			}
 			tasks = append(tasks, BackupTask{
+				local,
 				taskid,
 				srcFs,
 				dstFs,
 				backup.Expire,
-				backuper.srcZfs,
-				dstZfs,
+				localZfs,
+				remoteZfs,
 			})
 			taskid++
 		}
 	}
-	return tasks
+	return tasks, nil
 }
 
 func (task *BackupTask) doBackup() error {
+	var err error
 	snapPostfix := time.Now().Format(timeFormat)
 	id := task.id
 	src := task.src
 	dst := task.dst
 
-	// Check if snapshot with timestamp-based name already exists:
 	log.Debug("[%d]: check %s exists", id, dst+"@"+snapPostfix)
 	if exist, err := task.dstZfs.ExistSnap(dst, snapPostfix); err != nil || exist {
 		if err != nil {
@@ -138,9 +129,6 @@ func (task *BackupTask) doBackup() error {
 		return errors.New(dst + "@" + snapPostfix + " " + warnWaitExist)
 	}
 
-	// Check, if backup for the first time or not:
-	// @zbackup_curr not exist: create it and send
-	// @zbackup_curr exist: create @zbackup_new, and send delta between them
 	log.Debug("[%d]: check %s exists", id, src+"@"+snapCurr)
 	if exist, err := task.srcZfs.ExistSnap(src, snapCurr); err != nil || !exist {
 		if err != nil {
@@ -149,8 +137,12 @@ func (task *BackupTask) doBackup() error {
 		snapNew = ""
 	}
 
-	// Backup:
-	if err := task.backupHelper(snapNew); err != nil {
+	if task.local {
+		err = task.doLocalBackup(snapNew)
+	} else {
+		err = task.doRemoteBackup(snapNew)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -158,15 +150,27 @@ func (task *BackupTask) doBackup() error {
 	return task.cleanExpired()
 }
 
-func (task *BackupTask) doLocalBackup() error {
-	return nil
+func (task *BackupTask) doLocalBackup(snapNew string) error {
+	snapPostfix := time.Now().Format(timeFormat)
+	id := task.id
+	src := task.src
+	dst := task.dst
+
+	log.Debug("[%d]: create snapshot: %s...", id, snapPostfix)
+	if err := task.srcZfs.CreateSnap(src, snapPostfix); err != nil {
+		return err
+	}
+
+	log.Debug("[%d]: set local %s 'readonly'...", id, dst)
+	if err := task.srcZfs.SetProperty(src, "readonly", "on"); err != nil {
+		return err
+	}
+
+	log.Debug("[%d]: set remote %s 'zbackup:=true'...", id, src+snapPostfix)
+	return task.dstZfs.SetProperty(src+"@"+snapPostfix, PROPERTY, "true")
 }
 
-func (task *BackupTask) doRemoteBackup() error {
-	return nil
-}
-
-func (task *BackupTask) backupHelper(snapNew string) error {
+func (task *BackupTask) doRemoteBackup(snapNew string) error {
 	snapPostfix := time.Now().Format(timeFormat)
 	id := task.id
 	src := task.src

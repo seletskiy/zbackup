@@ -29,8 +29,7 @@ var (
 	warnUser     = errors.New("'user' and localmode are mutually exclusive, skip this [[backup]] section")
 	warnHost     = errors.New("'host' and localmode are mutually exclusive, skip this [[backup]] section")
 	warnKey      = errors.New("'key' and localmode are mutually exclusive, skip this [[backup]] section")
-
-	warnThread = errors.New("'threads' less than 1, set to '1'")
+	warnThread   = errors.New("'threads' less than 1, set to '1'")
 )
 
 type Config struct {
